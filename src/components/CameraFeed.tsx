@@ -96,10 +96,12 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
     };
   }, [liveStream, camera.id, savedFences]);
 
-  const isOffline = camera.status === 'OFFLINE';
+  const isOffline = ['OFFLINE', 'DISCONNECTED', 'ERROR'].includes(camera.status);
   const isNight = camera.scenario === 'night';
   const camDetections = detections.filter(d => d.cameraId === camera.id);
   const hasLive = !!liveStream;
+  const hasBackendStream = !hasLive && Boolean(camera.rtsp_url || camera.status === 'LIVE');
+  const hasSignal = hasLive || hasBackendStream;
   const camZones = zones.filter(z => z.cameraIds?.includes(camera.id));
 
   return (
@@ -127,7 +129,7 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
             )}
 
             {/* Live Universal CCTV Stream from backend */}
-            {!hasLive && (camera.rtsp_url || camera.status === 'LIVE') && (
+            {hasBackendStream && (
               <img
                 src={`${API_BASE_URL}/api/v1/cameras/${camera.id}/live`}
                 alt={camera.name}
@@ -191,13 +193,13 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
 
         {/* Top overlay bar */}
         {!isOffline && (
-          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1 bg-gradient-to-b from-black/70 to-transparent pointer-events-none">
+          <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between bg-gradient-to-b from-slate-950/90 via-slate-950/55 to-transparent px-3 pb-4 pt-2.5 pointer-events-none">
             <div className="flex items-center gap-1.5">
-              <span className={`status-dot ${hasLive ? 'bg-emerald-400' : camera.status === 'ONLINE' ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
-              <span className="text-[10px] font-mono text-slate-700">{camera.id}</span>
-              {hasLive && (
-                <span className="badge bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] px-1 py-0">LIVE CAM</span>
-              )}
+              <span className={`status-dot ${isOffline ? 'bg-red-400' : hasSignal ? 'animate-pulse bg-emerald-400' : camera.status === 'DEGRADED' ? 'bg-amber-400' : 'bg-blue-400'}`} />
+              <span className="text-[10px] font-bold font-mono text-white/95">{camera.id}</span>
+              <span className={`rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider ${isOffline ? 'border-red-300/30 bg-red-500/20 text-red-100' : hasSignal ? 'border-emerald-300/30 bg-emerald-500/20 text-emerald-100' : camera.status === 'DEGRADED' ? 'border-amber-300/30 bg-amber-500/20 text-amber-100' : 'border-blue-300/30 bg-blue-500/20 text-blue-100'}`}>
+                {isOffline ? 'OFFLINE' : hasSignal ? 'LIVE' : camera.status}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               {camera.recording && (
@@ -205,16 +207,16 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
                   <span className="status-dot bg-red-500 animate-pulse" /> REC
                 </span>
               )}
-              <span className="text-[10px] font-mono text-slate-600">{hasLive ? '30 FPS' : `${camera.fps} FPS`}</span>
+              <span className="text-[10px] font-mono font-semibold text-white/80">{hasLive ? '30 FPS' : `${camera.fps} FPS`}</span>
             </div>
           </div>
         )}
 
         {/* Bottom overlay bar */}
         {!isOffline && !compact && (
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-2 py-1 bg-gradient-to-t from-black/70 to-transparent pointer-events-none">
-            <span className="text-[10px] text-slate-700 truncate">{camera.name} — {camera.location}</span>
-            <span className="text-[10px] font-mono text-accent-300">
+          <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between bg-gradient-to-t from-slate-950/90 via-slate-950/55 to-transparent px-3 pb-2 pt-5 pointer-events-none">
+            <span className="truncate text-[10px] font-semibold text-white/90">{camera.name} — {camera.location}</span>
+            <span className="ml-2 shrink-0 text-[10px] font-mono text-emerald-200">
               {time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
             </span>
           </div>
@@ -222,7 +224,7 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
 
         {/* Scenario badge */}
         {!isOffline && (
-          <div className="absolute top-7 right-2 pointer-events-none">
+          <div className="absolute right-3 top-11 z-20 pointer-events-none">
             <span className={`badge ${camera.scenario === 'normal' ? 'bg-emerald-500/20 text-emerald-300' : camera.scenario === 'night' ? 'bg-indigo-500/20 text-indigo-300' : camera.scenario === 'intrusion' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'}`}>
               {scenarioLabels[camera.scenario]}
             </span>
