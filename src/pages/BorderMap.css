@@ -1,0 +1,92 @@
+/* BorderMap.css */
+
+/* Dark theme overrides for Leaflet */
+.leaflet-container {
+  background-color: #0f172a !important; /* slate-900 */
+}
+
+/* Invert default map tiles to make them dark, but keep original colors for our custom elements */
+.dark-map-tiles {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
+.leaflet-control-zoom {
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background-color: #1e293b !important; /* slate-800 */
+}
+
+.leaflet-control-zoom a {
+  background-color: #1e293b !important;
+  color: #cbd5e1 !important; /* slate-300 */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background-color: #334155 !important; /* slate-700 */
+}
+
+.leaflet-control-attribution {
+  background-color: rgba(15, 23, 42, 0.8) !important;
+  color: #64748b !important; /* slate-500 */
+}
+
+.leaflet-control-attribution a {
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+/* Custom Marker Styling */
+.custom-marker {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.marker-pulse-critical {
+  width: 20px;
+  height: 20px;
+  background-color: #ef4444;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  animation: pulse-critical 2s infinite;
+  border: 2px solid white;
+}
+
+.marker-pulse-warning {
+  width: 20px;
+  height: 20px;
+  background-color: #f59e0b;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
+  animation: pulse-warning 2s infinite;
+  border: 2px solid white;
+}
+
+@keyframes pulse-critical {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 15px rgba(239, 68, 68, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+@keyframes pulse-warning {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 15px rgba(245, 158, 11, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
