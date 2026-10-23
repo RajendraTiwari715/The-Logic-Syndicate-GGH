@@ -15,3 +15,6 @@ backend/data/recordings/
 .DS_Store
 miniconda.exe
 python-installer.exe
+*.pt
+*.mp4
+
