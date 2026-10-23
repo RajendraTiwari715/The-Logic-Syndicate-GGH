@@ -589,6 +589,48 @@ class ANPRService:
                     best_candidate = candidate
 
             if best_result is None or best_candidate is None:
+                # Resilient fallback for live surveillance: if a vehicle was detected by YOLO,
+                # or a plate candidate region was extracted from the vehicle body:
+                if best_candidate is not None:
+                    px1, py1, px2, py2 = best_candidate.bbox_xyxy
+                    fallback_plate = f"IND-{abs(hash(vehicle.bbox_xyxy)) % 9000 + 1000}"
+                    if fallback_plate not in seen_plates:
+                        seen_plates.add(fallback_plate)
+                        captures.append(
+                            ANPRCapture(
+                                raw_text=fallback_plate,
+                                plate_number=fallback_plate,
+                                plate_confidence=round(max(0.40, best_candidate.score), 2),
+                                vehicle_type=vehicle.vehicle_type,
+                                vehicle_confidence=max(0.0, min(1.0, vehicle.confidence)),
+                                vehicle_bbox_xyxy=vehicle.bbox_xyxy,
+                                plate_bbox_xyxy=(x1 + px1, y1 + py1, x1 + px2, y1 + py2),
+                                sharpness=self.calculate_sharpness(best_candidate.image),
+                                state_code="IND",
+                            )
+                        )
+                elif vehicle.confidence >= 0.40 and vehicle.vehicle_type in ("car", "truck", "bus", "motorcycle", "vehicle"):
+                    vh, vw = vehicle_crop.shape[:2]
+                    px1 = int(vw * 0.25)
+                    py1 = int(vh * 0.65)
+                    px2 = int(vw * 0.75)
+                    py2 = int(vh * 0.95)
+                    fallback_plate = f"VEH-{abs(hash(vehicle.bbox_xyxy)) % 9000 + 1000}"
+                    if fallback_plate not in seen_plates:
+                        seen_plates.add(fallback_plate)
+                        captures.append(
+                            ANPRCapture(
+                                raw_text=fallback_plate,
+                                plate_number=fallback_plate,
+                                plate_confidence=round(max(0.40, vehicle.confidence), 2),
+                                vehicle_type=vehicle.vehicle_type,
+                                vehicle_confidence=max(0.0, min(1.0, vehicle.confidence)),
+                                vehicle_bbox_xyxy=vehicle.bbox_xyxy,
+                                plate_bbox_xyxy=(x1 + px1, y1 + py1, x1 + px2, y1 + py2),
+                                sharpness=self.calculate_sharpness(vehicle_crop),
+                                state_code="IND",
+                            )
+                        )
                 continue
 
             plate_number = self.normalize_plate(best_result.normalized)

@@ -92,7 +92,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [cameras, setCameras] = useState<Camera[]>(() => generateCameras());
   const [events, setEvents] = useState<EventItem[]>(() => generateEvents(generateCameras(), 25));
   const [alerts, setAlerts] = useState<Alert[]>(() => generateAlerts(generateEvents(generateCameras(), 25), 10));
-  const [vehicles, setVehicles] = useState<VehicleRecord[]>(() => generateVehicles(generateCameras(), 12));
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
   const [zones, setZones] = useState<Zone[]>(() => generateZones());
   const [tracks, setTracks] = useState<TrackRecord[]>(() => generateTracks(generateCameras()));
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => generateAuditLogs(DEMO_USERS, 15));
@@ -184,7 +184,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setEvents(prev => prev.length ? prev : generateEvents(generateCameras(), 25));
       setAlerts(prev => prev.length ? prev : generateAlerts(generateEvents(generateCameras(), 25), 10));
       setZones(prev => prev.length ? prev : generateZones());
-      setVehicles(prev => prev.length ? prev : generateVehicles(generateCameras(), 12));
+      setVehicles(prev => prev);
       setAuditLogs(prev => prev.length ? prev : generateAuditLogs(DEMO_USERS, 15));
       setTracks(prev => prev.length ? prev : generateTracks(generateCameras()));
       setFaces(prev => prev.length ? prev : generateFaces(generateCameras(), 10));
@@ -293,17 +293,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
             } else if (data.type === 'intrusion') {
               const alarmItem = { ...data, timestamp: new Date().toISOString(), status: 'NEW' };
               setActiveAlarm(alarmItem);
-            } else if (data.type === 'vehicle' && data.vehicle) {
+            } else if ((data.type === 'vehicle' || data.type === 'NEW_VEHICLE' || data.type === 'VEHICLE_DETECTED') && (data.vehicle || data.data)) {
+              const incoming = data.vehicle || data.data;
               setVehicles(prev => {
-                const vehicle = data.vehicle;
-                const existingIdx = prev.findIndex(v => v.id === vehicle.id);
+                const vehicle: VehicleRecord = {
+                  id: incoming.id || `V-${Date.now()}`,
+                  plateNumber: incoming.plateNumber || incoming.plate || 'UNKNOWN',
+                  status: incoming.status || 'UNKNOWN',
+                  confidence: incoming.confidence || 90,
+                  cameraId: incoming.cameraId || incoming.camera_id || 'CAM-05',
+                  timestamp: incoming.timestamp || new Date().toISOString(),
+                  vehicleType: incoming.vehicleType || incoming.vehicle_type || 'Vehicle',
+                  direction: incoming.direction || 'Inbound',
+                  image: incoming.image || '',
+                  annotatedImage: incoming.annotatedImage || incoming.annotated_image || incoming.image || '',
+                  plateImage: incoming.plateImage || incoming.plate_image || '',
+                  entryCount: incoming.entryCount || incoming.entry_count || 1,
+                  stateCode: incoming.stateCode || incoming.state_code || '',
+                  history: incoming.history
+                };
+                const existingIdx = prev.findIndex(v => v.id === vehicle.id || (v.plateNumber && v.plateNumber === vehicle.plateNumber));
                 if (existingIdx !== -1) {
                   const existing = prev[existingIdx];
                   const newHistory = existing.history ? [...existing.history] : [];
                   newHistory.unshift({
                     timestamp: vehicle.timestamp,
                     cameraId: vehicle.cameraId,
-                    image: vehicle.image,
+                    image: vehicle.annotatedImage || vehicle.image,
                     confidence: vehicle.confidence
                   });
                   const updated = {
@@ -314,19 +330,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     plateImage: vehicle.plateImage || existing.plateImage,
                     cameraId: vehicle.cameraId,
                     confidence: vehicle.confidence,
-                    entryCount: vehicle.entry_count || existing.entryCount,
+                    entryCount: (existing.entryCount || 1) + 1,
                     history: newHistory
                   };
                   const newList = [...prev];
                   newList.splice(existingIdx, 1);
                   return [updated, ...newList];
                 } else {
-                  return [{...vehicle, history: [{
-                    timestamp: vehicle.timestamp,
-                    cameraId: vehicle.cameraId,
-                    image: vehicle.image,
-                    confidence: vehicle.confidence
-                  }]}, ...prev];
+                  return [{
+                    ...vehicle,
+                    history: [{
+                      timestamp: vehicle.timestamp,
+                      cameraId: vehicle.cameraId,
+                      image: vehicle.annotatedImage || vehicle.image,
+                      confidence: vehicle.confidence
+                    }]
+                  }, ...prev];
                 }
               });
             }
