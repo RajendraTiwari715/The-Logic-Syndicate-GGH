@@ -211,7 +211,16 @@ def _save_anpr_artifacts(
 
 def vehicle_to_payload(db: Session, vehicle: VehicleRecord) -> dict:
     plate_record = db.query(Plate).filter(Plate.vehicle_id == vehicle.id).order_by(Plate.timestamp.desc()).first()
-    event_record = db.query(EventItem).filter(EventItem.trackingId == vehicle.id).first()
+    normalized_plate = normalize_plate(vehicle.normalized_plate or vehicle.plateNumber or "")
+    tracking_ids = [vehicle.id]
+    if normalized_plate:
+        tracking_ids.append(f"V-ANPR-{normalized_plate}")
+    event_record = (
+        db.query(EventItem)
+        .filter(EventItem.trackingId.in_(tracking_ids))
+        .order_by(EventItem.timestamp.desc())
+        .first()
+    )
     image = None
     annotated_image = None
     plate_image = None
@@ -295,11 +304,15 @@ def _persist_capture(
         return {}, None
         
     vehicle_id = f"V-ANPR-{plate_norm}"
-    vehicle, is_new_entry = id_manager.resolve_vehicle(vehicle_id, capture.plate_number)
+    vehicle, is_new_entry = id_manager.resolve_vehicle(
+        vehicle_id,
+        plate_norm,
+        force_new_entry=source != "live",
+    )
     
     if not is_new_entry:
         # 2-minute rule suppressed this entry (bounce or same session)
-        return vehicle_to_payload(db, vehicle), None
+        return {}, None
         
     matched_watchlist = _watchlist_match(db, capture.plate_number)
     status = "WATCHLIST" if matched_watchlist else "UNKNOWN"
@@ -318,20 +331,14 @@ def _persist_capture(
     event_id = f"EVT-{uuid.uuid4().hex[:12].upper()}"
     timestamp_iso = timestamp.isoformat() + "Z"
 
-    # Only save new images if it's the very first entry of this vehicle
-    if vehicle.entry_count == 1:
-        file_path, file_url, sha256_hash, plate_crop_url, annotated_url = _save_anpr_artifacts(
-            frame, capture, camera_id, timestamp, is_watchlist=bool(matched_watchlist)
-        )
-        if hasattr(vehicle, 'representative_image'):
-            vehicle.representative_image = file_url
-            db.commit()
-    else:
-        # Re-entry after 2 minutes — reuse existing image pointers
-        file_path, file_url, sha256_hash, plate_crop_url, annotated_url = "", "", "", "", ""
-        if hasattr(vehicle, 'representative_image') and vehicle.representative_image:
-            file_url = vehicle.representative_image
-            annotated_url = file_url
+    # Save a fresh evidence set for each accepted vehicle entry. The live
+    # frame dedupe and identity cooldown above prevent duplicate frame spam.
+    file_path, file_url, sha256_hash, plate_crop_url, annotated_url = _save_anpr_artifacts(
+        frame, capture, camera_id, timestamp, is_watchlist=bool(matched_watchlist)
+    )
+    if hasattr(vehicle, 'representative_image'):
+        vehicle.representative_image = file_url
+        db.commit()
 
     event = EventItem(
         id=event_id,
@@ -390,7 +397,8 @@ def _persist_capture(
     from app.core.ledger import record_event_ledger
     ledger_hash = record_event_ledger(db, event)
     if ledger_hash:
-        event.details = {"blockchain_hash": ledger_hash} # Expose payload hash back to UI
+        event_details = event.details if isinstance(event.details, dict) else {}
+        event.details = {**event_details, "blockchain_hash": ledger_hash}
 
     plate = Plate(
         id=str(uuid.uuid4()),
@@ -482,6 +490,8 @@ def process_anpr_frame(
         if not _recent_capture_allowed(camera_id, capture.plate_number, dedupe_seconds):
             continue
         payload, alert_payload = _persist_capture(db, capture, frame, camera_id, direction, source, timestamp)
+        if not payload:
+            continue
         if seen_plate_numbers is not None:
             seen_plate_numbers.add(normalized_plate)
         payloads.append(payload)

@@ -34,9 +34,9 @@ class WorkerPool:
 
         # Face detection state (per camera)
         self._face_cascade = None
-        self._known_faces: list = []  # [{id, hist, last_seen, identity}]
+        self._face_tracks: Dict[str, list[dict]] = {}
+        self._object_tracks: Dict[str, list[dict]] = {}
         self._last_face_time: Dict[str, float] = {}
-        self._last_object_snapshot: Dict[tuple[str, str], float] = {}
         self._last_fence_time: float = 0.0
 
     def _get_face_cascade(self):
@@ -65,14 +65,99 @@ class WorkerPool:
                 self._loop
             )
 
-    def _save_object_snapshot(self, db, camera_id: str, frame: np.ndarray, detection: dict, timestamp: str) -> None:
-        """Persist at most one representative non-face image per camera/class each minute."""
-        if detection.get("class") == "person":
-            return
+    @staticmethod
+    def _bbox_iou(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> float:
+        x1 = max(first[0], second[0])
+        y1 = max(first[1], second[1])
+        x2 = min(first[2], second[2])
+        y2 = min(first[3], second[3])
+        intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+        if intersection == 0:
+            return 0.0
+        area_first = max(0.0, first[2] - first[0]) * max(0.0, first[3] - first[1])
+        area_second = max(0.0, second[2] - second[0]) * max(0.0, second[3] - second[1])
+        return intersection / max(area_first + area_second - intersection, 1.0)
 
-        snapshot_key = (camera_id, detection.get("class", "object"))
-        now = time.time()
-        if now - self._last_object_snapshot.get(snapshot_key, 0.0) < 60:
+    @staticmethod
+    def _boxes_match(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> tuple[bool, float]:
+        first_width = max(first[2] - first[0], 1.0)
+        first_height = max(first[3] - first[1], 1.0)
+        second_width = max(second[2] - second[0], 1.0)
+        second_height = max(second[3] - second[1], 1.0)
+        first_cx, first_cy = (first[0] + first[2]) / 2, (first[1] + first[3]) / 2
+        second_cx, second_cy = (second[0] + second[2]) / 2, (second[1] + second[3]) / 2
+        scale = max((first_width + first_height + second_width + second_height) / 4, 1.0)
+        distance = (((first_cx - second_cx) ** 2 + (first_cy - second_cy) ** 2) ** 0.5) / scale
+        size_ratio = max(first_width / second_width, second_width / first_width,
+                         first_height / second_height, second_height / first_height)
+        overlap = WorkerPool._bbox_iou(first, second)
+        return size_ratio <= 2.5 and (overlap >= 0.05 or distance <= 1.25), distance - overlap
+
+    def _update_object_tracks(self, camera_id: str, detections: list[dict], now: float) -> None:
+        """Assign stable per-camera IDs so every distinct object gets one snapshot."""
+        tracks = [
+            track for track in self._object_tracks.get(camera_id, [])
+            if now - track["last_seen"] <= 5.0
+        ]
+        assigned: set[str] = set()
+
+        for detection in detections:
+            bbox = tuple(float(value) for value in detection["bbox"])
+            best_track = None
+            best_score = float("inf")
+            for track in tracks:
+                if track["id"] in assigned or track["class"] != detection["class"]:
+                    continue
+                matches, score = self._boxes_match(track["bbox"], bbox)
+                if matches and score < best_score:
+                    best_track = track
+                    best_score = score
+
+            if best_track is None:
+                best_track = {
+                    "id": f"TRK-{uuid.uuid4().hex[:12]}",
+                    "class": detection["class"],
+                    "snapshot_saved": False,
+                }
+                tracks.append(best_track)
+
+            best_track["bbox"] = bbox
+            best_track["last_seen"] = now
+            detection["is_new_track"] = not best_track.get("snapshot_saved", False)
+            assigned.add(best_track["id"])
+            detection["tracking_id"] = best_track["id"]
+
+        self._object_tracks[camera_id] = tracks
+
+    def _face_track_for_detection(self, camera_id: str, bbox: tuple[float, float, float, float], now: float) -> tuple[str, bool]:
+        """Track face boxes within one camera; do not identify people by clothing color."""
+        tracks = [
+            track for track in self._face_tracks.get(camera_id, [])
+            if now - track["last_seen"] <= 10.0
+        ]
+        best_track = None
+        best_score = float("inf")
+        for track in tracks:
+            if track.get("assigned_at") == now:
+                continue
+            matches, score = self._boxes_match(track["bbox"], bbox)
+            if matches and score < best_score:
+                best_track = track
+                best_score = score
+
+        is_new = best_track is None
+        if is_new:
+            best_track = {"id": f"FACE-{uuid.uuid4().hex[:10]}", "logged": False}
+            tracks.append(best_track)
+        best_track["bbox"] = bbox
+        best_track["last_seen"] = now
+        best_track["assigned_at"] = now
+        self._face_tracks[camera_id] = tracks
+        return best_track["id"], is_new or not best_track.get("logged", False)
+
+    def _save_object_snapshot(self, db, camera_id: str, frame: np.ndarray, detection: dict, timestamp: str) -> None:
+        """Persist one image per tracked person/object and retry failed writes."""
+        if not detection.get("is_new_track"):
             return
 
         x1, y1, x2, y2 = (int(round(value)) for value in detection["bbox"])
@@ -87,26 +172,76 @@ class WorkerPool:
             from app.models.core_models import FaceRecord
             from app.services.snapshot_store import evidence_storage
 
-            stored_image = evidence_storage.upload_evidence(crop, camera_id, f"OBJECT_{detection.get('label', 'DETECTION')}")
+            is_person = detection.get("class") == "person"
+            label = detection.get("label", "DETECTION")
+            stored_image = evidence_storage.upload_evidence(
+                crop, camera_id, f"{'PERSON' if is_person else 'OBJECT'}_{label}"
+            )
             if not stored_image:
                 return
 
-            db.add(FaceRecord(
-                id=f"OBJECT-LOG-{uuid.uuid4().hex[:8]}",
+            tracking_id = detection["tracking_id"]
+            record_id = f"{'FACE' if is_person else 'OBJECT'}-LOG-{uuid.uuid4().hex[:8]}"
+            face_record = FaceRecord(
+                id=record_id,
                 cameraId=camera_id,
-                identity=detection.get("label", detection.get("class", "Object")).title(),
+                identity=(
+                    f"Unknown ID-{tracking_id[-6:].upper()}"
+                    if is_person else label.title()
+                ),
                 confidence=int(round(detection.get("confidence", 0) * 100)),
                 timestamp=timestamp,
-                database="Object Detection",
+                database="Local DB" if is_person else "Object Detection",
                 status="UNKNOWN",
                 image=stored_image[0],
                 direction="Unknown",
-            ))
+            )
+            db.add(face_record)
             db.commit()
-            self._last_object_snapshot[snapshot_key] = now
+            for track in self._object_tracks.get(camera_id, []):
+                if track["id"] == tracking_id:
+                    track["snapshot_saved"] = True
+                    if is_person:
+                        track["record_id"] = record_id
+                        track["identity"] = face_record.identity
+                        track["face_enhanced"] = False
+                    break
+            if is_person:
+                self._broadcast_sync({
+                    "type": "NEW_FACE",
+                    "data": {
+                        "id": face_record.id,
+                        "cameraId": face_record.cameraId,
+                        "identity": face_record.identity,
+                        "confidence": face_record.confidence,
+                        "timestamp": face_record.timestamp,
+                        "database": face_record.database,
+                        "status": face_record.status,
+                        "image": face_record.image,
+                        "direction": face_record.direction,
+                    },
+                })
         except Exception as exc:
             db.rollback()
             logger.warning("[%s] Could not persist object snapshot: %s", camera_id, exc)
+
+    def _person_track_for_face(
+        self,
+        camera_id: str,
+        face_bbox: tuple[float, float, float, float],
+        now: float,
+    ) -> dict | None:
+        """Match a detected face crop to its person detection in this camera frame."""
+        face_center = ((face_bbox[0] + face_bbox[2]) / 2, (face_bbox[1] + face_bbox[3]) / 2)
+        candidates = []
+        for track in self._object_tracks.get(camera_id, []):
+            if track["class"] != "person" or now - track["last_seen"] > 5.0:
+                continue
+            x1, y1, x2, y2 = track["bbox"]
+            if x1 <= face_center[0] <= x2 and y1 <= face_center[1] <= y2:
+                area = max((x2 - x1) * (y2 - y1), 1.0)
+                candidates.append((area, track))
+        return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
     def _inference_bridge(self, frame: np.ndarray, camera_id: str, context: dict = None):
         """
@@ -197,17 +332,18 @@ class WorkerPool:
                         if detections:
                             h, w = frame.shape[:2]
                             now_iso = datetime.utcnow().isoformat() + "Z"
-                            for idx, det in enumerate(detections):
+                            self._update_object_tracks(camera_id, detections, time.time())
+                            for det in detections:
                                 self._save_object_snapshot(db, camera_id, frame, det, now_iso)
                                 x1, y1, x2, y2 = det["bbox"]
-                                stable_id = f"{camera_id}-{det['class']}-{idx}"
+                                stable_id = det["tracking_id"]
                                 self._broadcast_sync({
                                     "type": "detection",
                                     "data": {
-                                        "id": f"det-{stable_id}",
+                                        "id": stable_id,
                                         "cameraId": camera_id,
                                         "objectType": det["class"],
-                                        "trackingId": f"TRK-{stable_id}",
+                                        "trackingId": stable_id,
                                         "confidence": round(det["confidence"] * 100, 1),
                                         "timestamp": now_iso,
                                         "bbox": {
@@ -305,7 +441,21 @@ class WorkerPool:
                                 self._last_face_time[camera_id] = current_time
                                 from app.models.core_models import FaceRecord
 
-                                for face_idx, (x, y, w, h) in enumerate(faces):
+                                for x, y, w, h in faces:
+                                    face_bbox = (float(x), float(y), float(x + w), float(y + h))
+                                    face_track_id, is_new_entry_event = self._face_track_for_detection(
+                                        camera_id, face_bbox, current_time
+                                    )
+                                    person_track = self._person_track_for_face(camera_id, face_bbox, current_time)
+                                    if person_track and person_track.get("face_enhanced"):
+                                        for track in self._face_tracks.get(camera_id, []):
+                                            if track["id"] == face_track_id:
+                                                track["logged"] = True
+                                                break
+                                        continue
+                                    if not person_track and not is_new_entry_event:
+                                        continue
+
                                     # Crop face with padding for UI display
                                     px = max(0, x - 20)
                                     py = max(0, y - 20)
@@ -316,73 +466,18 @@ class WorkerPool:
                                     if face_crop.size == 0:
                                         continue
 
-                                    # Crop face + upper body for color histogram Re-ID (includes clothing color entropy)
-                                    body_h = min(frame.shape[0] - py, h + int(h * 2.5))
-                                    body_crop = frame[py:py+body_h, px:px+pw]
-
-                                    # HSV histogram for basic Re-ID
-                                    hsv_crop = cv2.cvtColor(body_crop, cv2.COLOR_BGR2HSV)
-                                    hist = cv2.calcHist([hsv_crop], [0, 1], None, [50, 60], [0, 180, 0, 256])
-                                    cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-
-                                    # Try to match against known faces in this session
-                                    matched_face = None
-                                    for kf in self._known_faces:
-                                        score = cv2.compareHist(hist, kf["hist"], cv2.HISTCMP_CORREL)
-                                        if score > 0.85:  # Stricter threshold because body color is more distinct
-                                            matched_face = kf
-                                            logger.debug(
-                                                f"[{camera_id}] Face re-ID match: id={kf['id']} score={score:.3f}"
-                                            )
-                                            break
-
-                                    TEN_HOURS_SEC = 10 * 3600
-
-                                    # Scoped variables for this face detection result
-                                    face_identity = "UNKNOWN"
-                                    face_status = "UNKNOWN"
-                                    is_new_entry_event = False
-                                    face_id_str = None
-
-                                    if matched_face:
-                                        if current_time - matched_face["last_seen"] < TEN_HOURS_SEC:
-                                            # Seen within 10 hours — update last_seen, no new log entry
-                                            matched_face["last_seen"] = current_time
-                                            logger.debug(f"[{camera_id}] Face seen recently, skipping DB log")
-                                            continue
-                                        else:
-                                            # Re-entry after 10 hours
-                                            matched_face["last_seen"] = current_time
-                                            face_identity = matched_face["identity"]
-                                            face_status = matched_face["status"]
-                                            face_id_str = matched_face["id"]
-                                            is_new_entry_event = True
+                                    # Clothing-color similarity is not a reliable person identity
+                                    # signal; bbox tracking keeps nearby people as separate entries.
+                                    if force_watchlist:
+                                        face_identity, face_status = "Watchlist Target", "FLAGGED"
+                                    elif force_reid:
+                                        face_identity, face_status = "Verified Staff", "AUTHORIZED"
                                     else:
-                                        # New face detected
-                                        if force_watchlist:
-                                            face_identity = "Watchlist Target"
-                                            face_status = "FLAGGED"
-                                        elif force_reid:
-                                            face_identity = "Verified Staff"
-                                            face_status = "AUTHORIZED"
-                                        else:
-                                            face_identity = f"Unknown ID-{uuid.uuid4().hex[:4].upper()}"
-                                            face_status = "UNKNOWN"
-
-                                        face_id_str = f"FACE-{uuid.uuid4().hex[:8]}"
-                                        self._known_faces.append({
-                                            "id": face_id_str,
-                                            "hist": hist,
-                                            "last_seen": current_time,
-                                            "identity": face_identity,
-                                            "status": face_status
-                                        })
-                                        is_new_entry_event = True
-
-                                        logger.info(
-                                            f"[{camera_id}] New face detected: id={face_id_str} "
-                                            f"status={face_status} identity={face_identity}"
+                                        face_identity = (
+                                            person_track.get("identity") if person_track
+                                            else f"Unknown ID-{face_track_id[-6:].upper()}"
                                         )
+                                        face_status = "UNKNOWN"
 
                                     # Persist the crop in the Docker-backed evidence store and
                                     # keep only its URL in PostgreSQL.
@@ -391,31 +486,35 @@ class WorkerPool:
                                         face_crop, camera_id, f"FACE_{face_identity}"
                                     )
                                     face_image_url = face_snapshot[0] if face_snapshot else None
+                                    if not face_image_url:
+                                        continue
 
-                                    # Attempt deep identity resolution via IdentityManager
+                                    # Persist one person record for this live track. Do not use
+                                    # clothing histograms as face embeddings: they merge different
+                                    # people wearing similar colors.
                                     try:
                                         from app.services.identity_manager import IdentityManager
                                         im = IdentityManager(db)
-                                        tracking_id = f"P-{face_id_str}"
-                                        person, is_new_entry_event = im.resolve_person(
-                                            tracking_id=tracking_id,
-                                            face_embedding=hist.flatten().tolist(),
-                                            name=face_identity if face_identity not in ("UNKNOWN", f"Unknown ID-{face_id_str[-4:]}") else None,
+                                        person, _ = im.resolve_person(
+                                            tracking_id=f"P-{person_track['id'] if person_track else face_track_id}",
+                                            face_embedding=None,
+                                            name=face_identity,
                                             live_image=face_image_url,
                                         )
                                         face_identity = person.name
-                                        face_status = person.authorization_status
+                                        if force_watchlist or force_reid:
+                                            person.authorization_status = face_status
+                                            db.commit()
+                                        else:
+                                            face_status = person.authorization_status
                                         logger.info(
                                             f"[{camera_id}] Identity resolved: person_id={person.id} "
                                             f"name={face_identity} status={face_status} "
-                                            f"entry_count={person.entry_count} is_new={is_new_entry_event}"
+                                            f"entry_count={person.entry_count}"
                                         )
                                     except Exception as e_id:
+                                        db.rollback()
                                         logger.warning(f"[{camera_id}] IdentityManager error (using session state): {e_id}")
-
-                                    # Only write DB record and broadcast on genuine new entry events
-                                    if not is_new_entry_event:
-                                        continue
 
                                     now_iso = datetime.utcnow().isoformat() + "Z"
 
@@ -424,20 +523,40 @@ class WorkerPool:
                                     frame_area = frame_w * frame_h
                                     confidence_score = 85 + int((face_area / max(frame_area, 1)) * 10)
 
-                                    face_record = FaceRecord(
-                                        id=f"FACE-LOG-{uuid.uuid4().hex[:8]}",
-                                        cameraId=camera_id,
-                                        identity=face_identity,
-                                        confidence=confidence_score,
-                                        timestamp=now_iso,
-                                        database="Local DB",
-                                        status=face_status,
-                                        image=face_image_url,
-                                        direction="Inbound" if "01" in camera_id else "Unknown"
-                                    )
-                                    db.add(face_record)
+                                    face_record = None
+                                    if person_track and person_track.get("record_id"):
+                                        face_record = db.query(FaceRecord).filter(
+                                            FaceRecord.id == person_track["record_id"]
+                                        ).first()
+                                    if face_record:
+                                        face_record.identity = face_identity
+                                        face_record.confidence = confidence_score
+                                        face_record.timestamp = now_iso
+                                        face_record.status = face_status
+                                        face_record.image = face_image_url
+                                    else:
+                                        face_record = FaceRecord(
+                                            id=f"FACE-LOG-{uuid.uuid4().hex[:8]}",
+                                            cameraId=camera_id,
+                                            identity=face_identity,
+                                            confidence=confidence_score,
+                                            timestamp=now_iso,
+                                            database="Local DB",
+                                            status=face_status,
+                                            image=face_image_url,
+                                            direction="Inbound" if "01" in camera_id else "Unknown"
+                                        )
+                                        db.add(face_record)
                                     db.commit()
                                     db.refresh(face_record)
+                                    if person_track:
+                                        person_track["record_id"] = face_record.id
+                                        person_track["identity"] = face_identity
+                                        person_track["face_enhanced"] = True
+                                    for track in self._face_tracks.get(camera_id, []):
+                                        if track["id"] == face_track_id:
+                                            track["logged"] = True
+                                            break
 
                                     face_data = {
                                         "id": face_record.id,
@@ -501,6 +620,7 @@ class WorkerPool:
                             )
                             self._broadcast_sync({"type": "NEW_ALERT", "data": anpr_alert})
                     except Exception as anpr_exc:
+                        db.rollback()
                         logger.error(f"[{camera_id}] ANPR pipeline error: {anpr_exc}")
 
             except Exception as exc:

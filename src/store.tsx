@@ -229,24 +229,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
             } else if (data.type === 'NEW_FACE' && data.data) {
               setFaces(prev => {
                 const face = data.data;
-                const existingIdx = prev.findIndex(f => f.identity === face.identity && f.identity !== 'Unknown');
+                const existingIdx = prev.findIndex(f => f.id === face.id);
                 if (existingIdx !== -1) {
                   const existing = prev[existingIdx];
-                  const newHistory = existing.history ? [...existing.history] : [];
-                  newHistory.unshift({
-                    timestamp: face.timestamp,
-                    cameraId: face.cameraId,
-                    image: face.image,
-                    confidence: face.confidence
-                  });
                   const updated = {
                     ...existing,
-                    timestamp: face.timestamp,
+                    ...face,
                     image: face.image || existing.image,
                     thumbnail: face.thumbnail || existing.thumbnail,
-                    cameraId: face.cameraId,
-                    confidence: face.confidence,
-                    history: newHistory
+                    history: existing.history
                   };
                   const newList = [...prev];
                   newList.splice(existingIdx, 1);

@@ -93,7 +93,13 @@ class IdentityManager:
         self.db.refresh(person)
         return person, is_new_entry_event
 
-    def resolve_vehicle(self, tracking_id: str, plate_number: str, live_image: str = None) -> tuple[VehicleRecord, bool]:
+    def resolve_vehicle(
+        self,
+        tracking_id: str,
+        plate_number: str,
+        live_image: str = None,
+        force_new_entry: bool = False,
+    ) -> tuple[VehicleRecord, bool]:
         # Check tracking ID session first (for fast debouncing without DB scan)
         permanent_id = self._track_to_vehicle.get(tracking_id)
         vehicle = None
@@ -103,27 +109,28 @@ class IdentityManager:
         is_new_entry_event = False
         
         if not vehicle:
-            # 1. New Track Session: Search historical databases for the plate
+            # Reuse the same vehicle record for recognized plates, including
+            # UNKNOWN records. Restricting this lookup to authorized vehicles
+            # duplicated every unknown plate after a backend restart.
             historical_match = None
             if plate_number and len(plate_number) > 3:
                 historical_match = self.db.query(VehicleRecord).filter(
-                    VehicleRecord.normalized_plate == plate_number, 
-                    VehicleRecord.status.in_(["AUTHORIZED", "WATCHLIST"])
-                ).first()
+                    VehicleRecord.normalized_plate == plate_number,
+                ).order_by(VehicleRecord.last_seen.desc()).first()
 
             if historical_match:
                 vehicle = historical_match
                 self._track_to_vehicle[tracking_id] = vehicle.id
                 
                 # Re-entry check
+                now_utc = datetime.now(timezone.utc)
                 if vehicle.last_seen:
-                    now_utc = datetime.now(timezone.utc)
                     last_seen_utc = vehicle.last_seen.replace(tzinfo=timezone.utc) if vehicle.last_seen.tzinfo is None else vehicle.last_seen
                     delta_sec = (now_utc - last_seen_utc).total_seconds()
                 else:
-                    delta_sec = 0
+                    delta_sec = self.RE_ENTRY_TIMEOUT_SEC + 1
 
-                if delta_sec > self.RE_ENTRY_TIMEOUT_SEC:
+                if force_new_entry or delta_sec > self.RE_ENTRY_TIMEOUT_SEC:
                     vehicle.entry_count += 1
                     is_new_entry_event = True
                 vehicle.last_seen = datetime.now(timezone.utc)
@@ -145,14 +152,14 @@ class IdentityManager:
                 self.db.add(vehicle)
         else:
             # Debounce re-entry logic
+            now_utc = datetime.now(timezone.utc)
             if vehicle.last_seen:
-                now_utc = datetime.now(timezone.utc)
                 last_seen_utc = vehicle.last_seen.replace(tzinfo=timezone.utc) if vehicle.last_seen.tzinfo is None else vehicle.last_seen
                 delta_sec = (now_utc - last_seen_utc).total_seconds()
             else:
-                delta_sec = 0
+                delta_sec = self.RE_ENTRY_TIMEOUT_SEC + 1
 
-            if delta_sec > self.RE_ENTRY_TIMEOUT_SEC:
+            if force_new_entry or delta_sec > self.RE_ENTRY_TIMEOUT_SEC:
                 vehicle.entry_count += 1
                 is_new_entry_event = True
             vehicle.last_seen = datetime.now(timezone.utc)
