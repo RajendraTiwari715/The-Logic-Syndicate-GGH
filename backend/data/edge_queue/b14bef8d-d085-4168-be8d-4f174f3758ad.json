@@ -1,0 +1,1 @@
+{"id": "b14bef8d-d085-4168-be8d-4f174f3758ad", "resource_type": "event", "payload": {"camera_id": "cam-1", "type": "LOITERING", "severity": "HIGH"}, "created_at": "2026-09-04T00:49:44.957167", "retry_count": 0}

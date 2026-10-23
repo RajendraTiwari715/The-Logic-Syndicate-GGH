@@ -1,0 +1,1 @@
+{"id": "94187d7b-7f35-497b-8e48-1fda411e04e3", "resource_type": "event", "payload": {"camera_id": "demo_cam_fc983e", "type": "RESTRICTED_ZONE_INTRUSION", "severity": "HIGH"}, "created_at": "2026-09-04T00:42:24.686850", "retry_count": 0}
