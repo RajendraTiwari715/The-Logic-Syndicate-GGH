@@ -5,9 +5,15 @@ import {
   Loader2, Upload, FileVideo, Image as ImageIcon, Download, Eye, 
   X, Sparkles, Filter, Check, AlertTriangle, Clock
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, API_BASE_URL } from '../lib/api';
 import type { VehicleRecord } from '../types';
 import CameraFeed from '../components/CameraFeed';
+
+function resolveImageUrl(img?: string): string {
+  if (!img) return '';
+  if (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('data:')) return img;
+  return `${API_BASE_URL}${img.startsWith('/') ? '' : '/'}${img}`;
+}
 
 export default function ANPR() {
   const { vehicles, showToast, addToWatchlist, watchlistPlates, refreshData, cameras, addVehicle, updateVehicleStatus } = useApp();
@@ -401,7 +407,7 @@ export default function ANPR() {
                   <div className="relative h-32 rounded-lg bg-slate-900 mb-3 overflow-hidden border border-slate-200 group">
                     {v.annotatedImage || v.image ? (
                       <img 
-                        src={v.annotatedImage || v.image} 
+                        src={resolveImageUrl(v.annotatedImage || v.image)} 
                         alt={`${v.vehicleType} ${v.plateNumber}`} 
                         className="absolute inset-0 h-full w-full object-cover transition-transform group-hover:scale-105" 
                       />
@@ -451,10 +457,14 @@ export default function ANPR() {
           </div>
 
           {filtered.length === 0 && (
-            <div className="card p-12 text-center text-slate-500 bg-white">
-              <Car className="h-10 w-10 mx-auto mb-2 text-slate-300" />
-              <p className="font-bold text-slate-700">No vehicle captures found</p>
-              <p className="text-xs text-slate-400 mt-1">Try changing your search keywords or upload a new photo / video feed.</p>
+            <div className="card p-12 text-center text-slate-500 bg-white border border-dashed border-slate-300 rounded-xl">
+              <div className="h-14 w-14 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-3">
+                <Car className="h-7 w-7 text-slate-400" />
+              </div>
+              <p className="font-bold text-slate-800 text-sm">No Live Vehicle Captures Yet</p>
+              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                Vehicles detected on active surveillance cameras or via media upload will appear here in real time with plate numbers, timestamps, and camera snapshots.
+              </p>
             </div>
           )}
         </div>
@@ -501,14 +511,15 @@ export default function ANPR() {
               {/* Main Image Frame */}
               <div className="relative h-64 rounded-xl bg-slate-950 overflow-hidden border border-slate-200 flex items-center justify-center">
                 <img 
-                  src={(inspectorTab === 'annotated' ? selectedVehicle.annotatedImage : selectedVehicle.image) || selectedVehicle.image} 
+                  src={resolveImageUrl((inspectorTab === 'annotated' ? selectedVehicle.annotatedImage : selectedVehicle.image) || selectedVehicle.image)} 
                   alt="Vehicle View" 
                   className="max-h-full max-w-full object-contain cursor-pointer" 
                   title="Full clean image"
                   onClick={() => {
+                    const imgUrl = resolveImageUrl((inspectorTab === 'annotated' ? selectedVehicle.annotatedImage : selectedVehicle.image) || selectedVehicle.image);
                     const win = window.open();
                     if (win) {
-                       win.document.write(`<img src="${(inspectorTab === 'annotated' ? selectedVehicle.annotatedImage : selectedVehicle.image) || selectedVehicle.image}" style="max-width: 100%;" />`);
+                       win.document.write(`<img src="${imgUrl}" style="max-width: 100%;" />`);
                     }
                   }}
                 />
@@ -521,7 +532,7 @@ export default function ANPR() {
                     <p className="text-[11px] font-bold uppercase text-slate-500">Cropped License Plate Region</p>
                     <p className="text-xs font-mono text-slate-700 font-bold">{selectedVehicle.rawText || selectedVehicle.plateNumber}</p>
                   </div>
-                  <img src={selectedVehicle.plateImage} alt="Tight Plate" className="h-10 rounded border border-slate-300 shadow-sm" />
+                  <img src={resolveImageUrl(selectedVehicle.plateImage)} alt="Tight Plate" className="h-10 rounded border border-slate-300 shadow-sm" />
                 </div>
               )}
 
@@ -555,7 +566,7 @@ export default function ANPR() {
                     {selectedVehicle.history.map((h, i) => (
                       <div key={i} className="flex gap-3 items-start bg-slate-50 p-2 rounded-lg border border-slate-100">
                         {h.image ? (
-                          <img src={h.image} className="w-16 h-12 object-cover rounded shadow-sm border border-slate-200" alt="History frame" />
+                          <img src={resolveImageUrl(h.image)} className="w-16 h-12 object-cover rounded shadow-sm border border-slate-200" alt="History frame" />
                         ) : (
                           <div className="w-16 h-12 bg-slate-200 rounded flex items-center justify-center">
                             <Car className="w-5 h-5 text-slate-400" />

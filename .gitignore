@@ -17,4 +17,6 @@ miniconda.exe
 python-installer.exe
 *.pt
 *.mp4
-
+*.diff
+status.txt
+*.timestamp*

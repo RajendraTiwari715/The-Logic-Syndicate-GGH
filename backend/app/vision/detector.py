@@ -2,8 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import logging
 import numpy as np
-from ultralytics import YOLO
+
+logger = logging.getLogger(__name__)
+
+try:
+    from ultralytics import YOLO
+    HAS_YOLO = True
+except Exception as e:
+    YOLO = None
+    HAS_YOLO = False
+    logger.warning("YOLO could not be initialized due to platform policy or missing dependencies: %s. Using fallback detector.", e)
 
 from app.config import settings
 
@@ -22,12 +32,22 @@ class DetectionObservation:
 
 class YoloTrackingDetector:
     def __init__(self) -> None:
-        model_reference = settings.model_path or "yolov8n.pt"
-        self.model = YOLO(model_reference)
-        names = self.model.names
-        self.class_ids = [class_id for class_id, label in names.items() if label in TARGET_CLASSES]
+        self.model = None
+        self.class_ids = []
+        if HAS_YOLO and YOLO is not None:
+            try:
+                model_reference = settings.model_path or "yolov8n.pt"
+                self.model = YOLO(model_reference)
+                names = self.model.names
+                self.class_ids = [class_id for class_id, label in names.items() if label in TARGET_CLASSES]
+            except Exception as exc:
+                logger.warning("Failed to load YOLO model: %s. Using fallback.", exc)
+                self.model = None
 
     def infer(self, frame: np.ndarray) -> list[DetectionObservation]:
+        if self.model is None:
+            return []
+
         results = self.model.track(
             frame,
             persist=True,

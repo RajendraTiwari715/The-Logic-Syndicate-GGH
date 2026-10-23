@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Camera, Detection } from '../types';
 import { useApp } from '../store';
-import { API_BASE_URL } from '../lib/api';
+import { API_BASE_URL, WS_BASE_URL } from '../lib/api';
 
 interface Props {
   camera: Camera;
@@ -49,13 +49,18 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
     let ws: WebSocket | null = null;
     let frameInterval: any = null;
     
-    // Only HW streams are pushed independently from frontend
-    if (liveStream && camera.id.startsWith('HW-')) {
-      // Find actual Fencing ID map "HW:12ac..." based on name fallback or let it match any
-      // For this demo mockHwCam name = device.label, so we map to HW:deviceId. But wait!
-      // In LiveSurveillance we assigned HW-1, HW-2 to mockHwCam.id. We need to pass the real ID.
-      // We will look up Fences that have ANY hardware mapped. To simplify, we'll map the active fences directly.
-      ws = new WebSocket('ws://localhost:8000/ws/detections');
+    // Stream frames to WebSocket for real-time AI & ANPR analysis
+    const shouldStreamFrames = Boolean(liveStream && (
+      camera.id.startsWith('HW-') || 
+      camera.id === 'CAM-05' || 
+      camera.camera_mode === 'ANPR' ||
+      camera.scenario === 'anpr' ||
+      camera.scenario === 'vehicle'
+    ));
+
+    if (shouldStreamFrames) {
+      const wsUrl = `${WS_BASE_URL}/ws/detections`;
+      ws = new WebSocket(wsUrl);
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       canvas.width = 640;
@@ -68,9 +73,9 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
                ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
                const base64 = canvas.toDataURL('image/jpeg', 0.6);
                
-               // Retrieve ALL fences containing ANY hardware camera to ensure they trigger
+               // Retrieve active fences matching this camera
                const activeZonesForCam = savedFences
-                  .filter(f => f.active && f.cameras.some(c => c.startsWith('HW:')))
+                  .filter(f => f.active && f.cameras.some(c => c === camera.id || (camera.id.startsWith('HW-') && c.startsWith('HW:'))))
                   .map(f => ({ id: f.id, name: f.name, points: f.points }));
 
                ws?.send(JSON.stringify({ 
@@ -78,7 +83,7 @@ export default function CameraFeed({ camera, detections = [], showOverlay = true
                   camera_id: camera.id, 
                   image: base64,
                   zones: activeZonesForCam,
-                  camera_mode: camera.camera_mode || 'ALL'
+                  camera_mode: camera.camera_mode || (camera.scenario === 'anpr' || camera.scenario === 'vehicle' ? 'ANPR' : 'ALL')
                }));
             }
          }, 500); 

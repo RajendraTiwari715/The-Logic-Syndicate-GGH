@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+backend/.venv
+backend/venv
+backend/__pycache__
+__pycache__
+*.pyc
+*.pt
+*.mp4

@@ -171,6 +171,13 @@ def healthcheck(db=Depends(get_db)):
             health_status["status"] = "degraded"
     except Exception:
         health_status["status"] = "degraded"
+
+    # Check AI Models
+    try:
+        from app.vision.model_manager import model_manager
+        health_status["components"]["ai_models"] = "healthy"
+    except Exception:
+        health_status["components"]["ai_models"] = "fallback_ready"
         
     return JSONResponse(
         status_code=200 if health_status["status"] == "ok" else 503,

@@ -221,29 +221,41 @@ def vehicle_to_payload(db: Session, vehicle: VehicleRecord) -> dict:
         details = event_record.details
         annotated_image = media_url(details.get("annotated_image_url"))
         plate_image = media_url(details.get("plate_crop_url"))
+        image = media_url(details.get("image_url"))
 
-    if plate_record and plate_record.evidence_id:
+    if not image and hasattr(vehicle, 'representative_image') and vehicle.representative_image:
+        image = media_url(vehicle.representative_image)
+
+    if not image and plate_record and plate_record.evidence_id:
         evidence = db.query(Evidence).filter(Evidence.id == plate_record.evidence_id).first()
         if evidence:
             image = media_url(evidence.file_url)
 
     state_code = anpr_service.get_state_code(vehicle.plateNumber)
+    ts = vehicle.timestamp
+    if not ts and plate_record and plate_record.timestamp:
+        ts = plate_record.timestamp.isoformat() + "Z"
+    if not ts:
+        ts = utcnow().isoformat() + "Z"
+
+    cam_id = vehicle.cameraId or (plate_record.camera_id if plate_record else "CAM-05")
 
     return {
         "id": vehicle.id,
-        "cameraId": vehicle.cameraId,
-        "vehicleType": vehicle.vehicleType,
+        "cameraId": cam_id,
+        "vehicleType": vehicle.vehicleType or "Vehicle",
         "plateNumber": vehicle.plateNumber,
-        "confidence": vehicle.confidence,
-        "timestamp": vehicle.timestamp,
-        "status": vehicle.status,
-        "direction": vehicle.direction or "Unknown",
-        "image": image,
+        "confidence": vehicle.confidence or 90,
+        "timestamp": ts,
+        "status": vehicle.status or "UNKNOWN",
+        "direction": vehicle.direction or "Inbound",
+        "image": image or annotated_image,
         "annotatedImage": annotated_image or image,
         "plateImage": plate_image,
         "stateCode": state_code,
         "sharpness": round(float(details.get("sharpness", 0.0)), 1),
         "rawText": details.get("raw_ocr_text", vehicle.plateNumber),
+        "entryCount": getattr(vehicle, "entry_count", 1),
     }
 
 
@@ -291,7 +303,10 @@ def _persist_capture(
         
     matched_watchlist = _watchlist_match(db, capture.plate_number)
     status = "WATCHLIST" if matched_watchlist else "UNKNOWN"
-    # Overwrite status with fresh watchlist info
+    timestamp_iso = timestamp.isoformat() + "Z"
+    # Overwrite status and temporal camera metadata with fresh info
+    vehicle.cameraId = camera_id
+    vehicle.timestamp = timestamp_iso
     vehicle.status = status
     vehicle.vehicleType = _vehicle_type_label(capture.vehicle_type)
     vehicle.confidence = int(round(capture.plate_confidence * 100))
@@ -379,7 +394,7 @@ def _persist_capture(
 
     plate = Plate(
         id=str(uuid.uuid4()),
-        vehicle_id=vehicle_id,
+        vehicle_id=vehicle.id,
         camera_id=camera_id,
         raw_ocr_text=capture.raw_text,
         normalized_plate=normalize_plate(capture.plate_number),

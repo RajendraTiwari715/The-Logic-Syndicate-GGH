@@ -20,6 +20,23 @@ class StorageClient:
         except Exception as e:
             logger.error(f"Failed to connect to MinIO: {e}")
 
+    def is_healthy(self) -> bool:
+        if not self.client:
+            self.connect()
+        if not self.client:
+            return False
+        try:
+            self.client.list_buckets()
+            return True
+        except Exception:
+            return False
+
+    @property
+    def minio(self):
+        if not self.client:
+            self.connect()
+        return self.client
+
     def get_client(self):
         if not self.client:
             self.connect()
