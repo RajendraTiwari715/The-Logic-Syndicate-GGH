@@ -4,10 +4,35 @@ import { useApp } from '../store';
 import { api } from '../lib/api';
 import CameraFeed from '../components/CameraFeed';
 import ModeSelector from '../components/ModeSelector';
-import { Video, Camera as CameraIcon, Shield, AlertTriangle, AlertCircle, Phone, WifiOff, Smartphone, X, Layers, Grid3x3, Activity, Loader, Maximize, Minimize, Cctv, Radio, CheckCircle2, Play, Settings, RefreshCw } from 'lucide-react';
-import type { Camera, CameraMode } from '../types';
+import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  Camera as CameraIcon,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Cctv,
+  Grid3x3,
+  Layers,
+  Loader,
+  MapPin,
+  Maximize,
+  Minimize,
+  Play,
+  Radio,
+  RefreshCw,
+  Smartphone,
+  X,
+} from 'lucide-react';
+import type { Camera } from '../types';
 
 // Remove SCENARIOS as it is now in ModeSelector
+
+type FeedScope = 'all' | 'online' | 'offline' | 'activity';
+
+const isOfflineStatus = (status: Camera['status']) => ['OFFLINE', 'DISCONNECTED', 'ERROR'].includes(status);
+const isOnlineStatus = (status: Camera['status']) => status === 'ONLINE' || status === 'LIVE';
 
 function HardwareVideoPlayer({ stream }: { stream: MediaStream }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -31,8 +56,11 @@ function HardwareVideoPlayer({ stream }: { stream: MediaStream }) {
 }
 
 export default function LiveSurveillance() {
-  const { cameras, setCameraMode, detections, selectedLiveCameraIds, setSelectedLiveCameraIds, savedFences, showToast, refreshData } = useApp();
+  const { cameras, alerts, setCameraMode, detections, selectedLiveCameraIds, setSelectedLiveCameraIds, savedFences, showToast, refreshData } = useApp();
   const [gridSize, setGridSize] = useState<'2x2' | '3x3'>('2x2');
+  const [gridPage, setGridPage] = useState(0);
+  const [feedScope, setFeedScope] = useState<FeedScope>('all');
+  const [selectedLocation, setSelectedLocation] = useState('all');
   const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
   const [camError, setCamError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -134,7 +162,7 @@ export default function LiveSurveillance() {
     setLiveStream(null);
   }, []);
 
-  const visibleCameras = selectedLiveCameraIds && selectedLiveCameraIds.length > 0
+  const selectedCameras = selectedLiveCameraIds && selectedLiveCameraIds.length > 0
     ? cameras.filter(c => selectedLiveCameraIds.includes(c.id))
     : cameras;
 
@@ -145,7 +173,75 @@ export default function LiveSurveillance() {
     !selectedLiveCameraIds || selectedLiveCameraIds.length === 0 || selectedLiveCameraIds.includes(`HW:${device.deviceId}`)
   );
 
-  const isSingleCamera = (visibleCameras.length + visibleHwCameras.length) === 1;
+  const onlineCameraCount = cameras.filter(camera => isOnlineStatus(camera.status)).length;
+  const offlineCameraCount = cameras.filter(camera => isOfflineStatus(camera.status)).length;
+  const hardwareLiveCount = Object.values(hardwareStreamsRef.current).filter(stream => stream.getVideoTracks().some(track => track.readyState === 'live')).length;
+  const activeAlertCount = alerts.filter(alert => alert.status !== 'RESOLVED').length;
+  const detectedCameraIds = new Set(detections.map(detection => detection.cameraId));
+  const locations = Array.from(new Set(cameras.map(camera => camera.location))).sort();
+  const filteredCameras = selectedCameras.filter(camera => {
+    if (selectedLocation !== 'all' && camera.location !== selectedLocation) return false;
+    if (feedScope === 'online' && !isOnlineStatus(camera.status)) return false;
+    if (feedScope === 'offline' && !isOfflineStatus(camera.status)) return false;
+    if (feedScope === 'activity' && !detectedCameraIds.has(camera.id)) return false;
+    return true;
+  });
+  const scopedHardwareCameras = visibleHwCameras.filter((device, index) => {
+    if (selectedLocation !== 'all' || feedScope === 'offline') return false;
+    if (feedScope === 'activity' && !detectedCameraIds.has(`HW-${index + 1}`) && !detectedCameraIds.has(`HW:${device.deviceId}`)) return false;
+    return true;
+  });
+
+  const feedItems = [
+    ...filteredCameras.map(camera => ({
+      key: camera.id,
+      camera,
+      stream: liveStream,
+      hardware: false,
+      sourceLabel: camera.rtsp_url ? 'IP CAMERA' : 'NETWORK',
+    })),
+    ...scopedHardwareCameras.map((device, index) => {
+      const cameraId = `HW-${index + 1}`;
+      const camera = cameras.find(existing => existing.id === cameraId) ?? {
+        id: cameraId,
+        name: device.label || `USB Camera ${index + 1}`,
+        bop: 'Command Center',
+        location: 'Local System',
+        status: 'ONLINE' as const,
+        fps: 30,
+        latency: 0,
+        storage: 0,
+        health: 100,
+        lastHeartbeat: new Date().toISOString(),
+        signalQuality: 100,
+        scenario: 'normal' as const,
+        camera_mode: 'ALL' as const,
+        recording: false,
+        detectionCount: 0,
+        coords: { x: 0, y: 0 },
+        mapCoord: { lat: 0, lng: 0 },
+      } satisfies Camera;
+      return {
+        key: `HW:${device.deviceId}`,
+        camera,
+        stream: hardwareStreamsRef.current[device.deviceId] ?? null,
+        hardware: true,
+        sourceLabel: 'LOCAL DEVICE',
+      };
+    }),
+  ];
+  const pageSize = gridSize === '2x2' ? 4 : 9;
+  const pageCount = Math.max(1, Math.ceil(feedItems.length / pageSize));
+  const pageFeedItems = feedItems.slice(gridPage * pageSize, (gridPage + 1) * pageSize);
+  const activityScopeCount = new Set(detections.map(detection => detection.cameraId)).size;
+
+  useEffect(() => {
+    setGridPage(0);
+  }, [feedScope, gridSize, selectedLiveCameraIds, selectedLocation]);
+
+  useEffect(() => {
+    if (gridPage >= pageCount) setGridPage(Math.max(0, pageCount - 1));
+  }, [gridPage, pageCount]);
 
   useEffect(() => {
     // Only standard component mounts here. Global Alarm handles timer.
@@ -196,206 +292,169 @@ export default function LiveSurveillance() {
   }, []);
 
   return (
-    <div className="live-shell space-y-5 animate-fade-in relative pb-8">
-      <div className="glass-panel live-hero p-5 sm:p-6">
-        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="live-shell relative animate-fade-in space-y-4 pb-8">
+      <header className="relative overflow-hidden rounded-3xl bg-slate-950 px-5 py-5 text-white shadow-[0_18px_50px_rgba(15,23,42,0.18)] sm:px-7 sm:py-6">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_85%_0%,rgba(59,130,246,0.28),transparent_35%),linear-gradient(110deg,transparent_45%,rgba(16,185,129,0.08))]" />
+        <div className="relative z-10 flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-800">Live Surveillance</h1>
-            <p className="mt-2 text-sm text-slate-600">Real-time CCTV monitoring with AI detection overlay and tactical response cues.</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-300">Operations center / video wall</p>
+            <h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">Live Surveillance</h1>
+            <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-slate-300 sm:text-sm">Monitor camera feeds, review detections, and control connected devices from one view.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-bold text-emerald-200">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+              {onlineCameraCount + hardwareLiveCount} CONNECTED
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-200">
+              <Radio className="h-3.5 w-3.5 text-blue-300" />
+              {cameras.length + hardwareCameras.length} CHANNELS
+            </div>
+            {activeAlertCount > 0 && (
+              <div className="inline-flex items-center gap-2 rounded-full border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-200">
+                <Bell className="h-3.5 w-3.5" />
+                {activeAlertCount} OPEN ALERTS
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <section aria-label="Surveillance summary" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <div className="glass-metric-card flex items-center gap-3 border-emerald-200 p-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600"><Cctv className="h-5 w-5" /></div>
+          <div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Online feeds</p><p className="mt-1 text-2xl font-black tabular-nums text-slate-900">{onlineCameraCount + hardwareLiveCount}</p></div>
+        </div>
+        <div className="glass-metric-card flex items-center gap-3 border-blue-200 p-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><Activity className="h-5 w-5" /></div>
+          <div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Detections</p><p className="mt-1 text-2xl font-black tabular-nums text-slate-900">{detections.length}</p></div>
+        </div>
+        <div className="glass-metric-card flex items-center gap-3 border-amber-200 p-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><Grid3x3 className="h-5 w-5" /></div>
+          <div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Grid layout</p><p className="mt-1 text-2xl font-black text-slate-900">{gridSize}</p></div>
+        </div>
+        <div className="glass-metric-card flex items-center gap-3 border-red-200 p-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600"><AlertTriangle className="h-5 w-5" /></div>
+          <div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Offline cameras</p><p className="mt-1 text-2xl font-black tabular-nums text-slate-900">{offlineCameraCount}</p></div>
+        </div>
+      </section>
+
+      <section className="glass-panel relative z-10 space-y-3 p-3 sm:p-4" aria-label="Feed filters and controls">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-slate-200 bg-white/80 p-1 shadow-sm" role="group" aria-label="Filter feeds">
+              {([
+                ['all', 'All feeds', cameras.length + hardwareCameras.length],
+                ['online', 'Online', onlineCameraCount + hardwareLiveCount],
+                ['offline', 'Offline', offlineCameraCount],
+                ['activity', 'With activity', activityScopeCount],
+              ] as [FeedScope, string, number][]).map(([scope, label, count]) => (
+                <button
+                  key={scope}
+                  type="button"
+                  aria-pressed={feedScope === scope}
+                  onClick={() => {
+                    setFeedScope(scope);
+                    setSelectedLocation('all');
+                    setSelectedLiveCameraIds(null);
+                    setGridPage(0);
+                  }}
+                  className={`rounded-lg px-3 py-2 text-[11px] font-bold transition ${feedScope === scope ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
+                >
+                  {label}<span className={`ml-1.5 tabular-nums ${feedScope === scope ? 'text-slate-300' : 'text-slate-400'}`}>{count}</span>
+                </button>
+              ))}
+            </div>
+
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 shadow-sm">
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <span className="sr-only">Filter by camera location</span>
+              <select
+                value={selectedLocation}
+                onChange={event => {
+                  setSelectedLocation(event.target.value);
+                  setSelectedLiveCameraIds(null);
+                  setGridPage(0);
+                }}
+                className="max-w-[180px] bg-transparent text-[11px] font-semibold text-slate-700 outline-none"
+              >
+                <option value="all">All locations</option>
+                {locations.map(location => <option key={location} value={location}>{location}</option>)}
+              </select>
+            </label>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="glass-chip glass-chip-success">
-              <span className="status-dot bg-emerald-500 animate-pulse" />
-              <span>LIVE</span>
-            </div>
-            <div className="glass-chip glass-chip-slate">
-              <Radio className="h-3.5 w-3.5 text-red-500" />
-              <span>12 channels active</span>
-            </div>
-            <div className="glass-chip glass-chip-slate">
-              <Shield className="h-3.5 w-3.5 text-emerald-500" />
-              <span>Encrypted</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="glass-metric-card border-orange-200">
-          <div className="metric-top">
-            <div className="metric-icon bg-orange-500/10">
-              <Cctv className="h-5 w-5 text-orange-500" />
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">Feeds</span>
-          </div>
-          <p className="metric-value mt-5">{visibleCameras.length}</p>
-          <p className="metric-label">Active monitored</p>
-        </div>
-
-        <div className="glass-metric-card border-emerald-200">
-          <div className="metric-top">
-            <div className="metric-icon bg-emerald-500/10">
-              <Shield className="h-5 w-5 text-emerald-500" />
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">Status</span>
-          </div>
-          <p className="metric-value mt-5">{cameras.filter(c => c.status === 'ONLINE').length}</p>
-          <p className="metric-label">Online cameras</p>
-        </div>
-
-        <div className="glass-metric-card border-indigo-200">
-          <div className="metric-top">
-            <div className="metric-icon bg-indigo-500/10">
-              <Grid3x3 className="h-5 w-5 text-indigo-500" />
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">Layout</span>
-          </div>
-          <p className="metric-value mt-5">{gridSize}</p>
-          <p className="metric-label">Current grid</p>
-        </div>
-
-        <div className="glass-metric-card border-red-200">
-          <div className="metric-top">
-            <div className="metric-icon bg-red-500/10">
-              <Radio className="h-5 w-5 text-red-500" />
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">Signal</span>
-          </div>
-          <p className="metric-value mt-5">{liveStream ? 'Phone' : 'Network'}</p>
-          <p className="metric-label">Input source</p>
-        </div>
-      </div>
-
-      <div className="glass-panel live-toolbar p-4 sm:p-5">
-        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2 overflow-x-auto pb-1 w-full">
             <button
-              onClick={() => setSelectedLiveCameraIds(null)}
-              className={`glass-chip whitespace-nowrap ${!selectedLiveCameraIds || selectedLiveCameraIds.length === 0 ? 'glass-chip-active' : 'glass-chip-slate'}`}
-            >
-              All Cameras
-            </button>
-
-            {/* Face & Object Detection Group */}
-            <button
-              onClick={() => setSelectedLiveCameraIds(['CAM-01'])}
-              className={`glass-chip whitespace-nowrap flex items-center gap-1.5 ${selectedLiveCameraIds?.length === 1 && selectedLiveCameraIds.includes('CAM-01')
-                  ? 'glass-chip-active border-indigo-500 text-indigo-400'
-                  : 'glass-chip-slate border-indigo-500/30'
-                }`}
-            >
-              <span className={`status-dot ${selectedLiveCameraIds?.length === 1 && selectedLiveCameraIds.includes('CAM-01') ? 'bg-indigo-400' : 'bg-slate-500'}`} />
-              Face & Object Detection
-            </button>
-
-            {/* ANPR Group */}
-            <button
-              onClick={() => setSelectedLiveCameraIds(['CAM-05'])}
-              className={`glass-chip whitespace-nowrap flex items-center gap-1.5 ${selectedLiveCameraIds?.length === 1 && selectedLiveCameraIds.includes('CAM-05')
-                  ? 'glass-chip-active border-orange-500 text-orange-400'
-                  : 'glass-chip-slate border-orange-500/30'
-                }`}
-            >
-              <span className={`status-dot ${selectedLiveCameraIds?.length === 1 && selectedLiveCameraIds.includes('CAM-05') ? 'bg-orange-400' : 'bg-slate-500'}`} />
-              ANPR (Gates)
-            </button>
-
-            {/* Fencing Group Chips */}
-            {savedFences.map(fence => {
-              const isSelected = selectedLiveCameraIds?.length === fence.cameras.length && fence.cameras.every(c => selectedLiveCameraIds?.includes(c));
-              return (
-                <button
-                  key={fence.id}
-                  onClick={() => setSelectedLiveCameraIds(fence.cameras)}
-                  className={`glass-chip whitespace-nowrap ${isSelected ? 'glass-chip-active border-blue-500 text-blue-400' : 'glass-chip-slate border-blue-500/30'} flex items-center gap-1.5`}
-                >
-                  <Layers className="w-3.5 h-3.5 text-blue-500" />
-                  {fence.name}
-                </button>
-              );
-            })}
-
-            {/* Location Group Chips */}
-            {Array.from(new Set(cameras.map(c => c.location))).sort().map(loc => {
-              const locCameras = cameras.filter(c => c.location === loc).map(c => c.id);
-              const isSelected = selectedLiveCameraIds && selectedLiveCameraIds.length === locCameras.length && locCameras.every(c => selectedLiveCameraIds.includes(c));
-
-              return (
-                <button
-                  key={loc}
-                  onClick={() => setSelectedLiveCameraIds(locCameras)}
-                  className={`glass-chip whitespace-nowrap flex items-center gap-1.5 ${isSelected ? 'glass-chip-active' : 'glass-chip-slate'}`}
-                >
-                  <span className={`status-dot ${isSelected ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                  {loc}
-                </button>
-              );
-            })}
-
-            {/* Hardware Cameras */}
-            {hardwareCameras.map((device, index) => {
-              const hwId = `HW:${device.deviceId}`;
-              const isSelected = selectedLiveCameraIds?.length === 1 && selectedLiveCameraIds.includes(hwId);
-              return (
-                <button
-                  key={device.deviceId}
-                  onClick={() => setSelectedLiveCameraIds([hwId])}
-                  className={`glass-chip whitespace-nowrap flex items-center gap-1.5 ${isSelected ? 'glass-chip-active border-emerald-500 text-emerald-400' : 'glass-chip-slate border-emerald-500/30'}`}
-                >
-                  <span className={`status-dot ${isSelected ? 'bg-emerald-400' : 'bg-emerald-400/50'}`} />
-                  {device.label || `USB Camera ${index + 1}`}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-2 self-end lg:self-auto">
-            <button
+              type="button"
               onClick={() => setShowCctvModal(true)}
-              className="flex items-center gap-1.5 rounded-xl border border-indigo-300 bg-indigo-50 px-3.5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 hover:border-indigo-400"
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3.5 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white shadow-sm transition hover:bg-blue-700"
             >
-              <Cctv className="h-3.5 w-3.5 text-indigo-600" />
-              Connect CCTV (RTSP/IP)
+              <Cctv className="h-4 w-4" /> Connect IP camera
             </button>
-
             {liveStream ? (
               <button
+                type="button"
                 onClick={disconnectPhoneCamera}
-                className="flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-red-600 transition-colors hover:bg-red-100"
+                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-red-700 transition hover:bg-red-100"
               >
-                <X className="h-3.5 w-3.5" />
-                Disconnect phone
+                <X className="h-3.5 w-3.5" /> Disconnect phone
               </button>
             ) : (
               <button
+                type="button"
                 onClick={connectPhoneCamera}
                 disabled={connecting}
-                className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
               >
-                <Smartphone className="h-3.5 w-3.5" />
-                {connecting ? 'Connecting...' : 'Connect phone'}
+                <Smartphone className="h-3.5 w-3.5" /> {connecting ? 'Connecting…' : 'Connect phone'}
               </button>
             )}
 
-            <div className="glass-toggle">
-              <button
-                onClick={() => setGridSize('2x2')}
-                className={`rounded-lg p-2 ${gridSize === '2x2' ? 'bg-orange-50 text-orange-600' : 'text-slate-600 hover:bg-slate-100'}`}
-                aria-label="2x2 grid"
-              >
-                <Grid3x3 className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setGridSize('3x3')}
-                className={`rounded-lg px-2.5 py-2 text-[10px] font-black uppercase tracking-[0.2em] ${gridSize === '3x3' ? 'bg-orange-50 text-orange-600' : 'text-slate-600 hover:bg-slate-100'}`}
-              >
-                3×3
-              </button>
+            <div className="glass-toggle" role="group" aria-label="Video wall layout">
+              {(['2x2', '3x3'] as const).map(size => (
+                <button
+                  key={size}
+                  type="button"
+                  aria-pressed={gridSize === size}
+                  onClick={() => {
+                    setGridSize(size);
+                    setGridPage(0);
+                  }}
+                  className={`rounded-lg px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] transition ${gridSize === size ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
+                >
+                  {size}
+                </button>
+              ))}
             </div>
           </div>
         </div>
-      </div>
+
+        {savedFences.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200/70 pt-3">
+            <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Fence groups</span>
+            {savedFences.map(fence => {
+              const isSelected = selectedLiveCameraIds?.length === fence.cameras.length && fence.cameras.every(cameraId => selectedLiveCameraIds.includes(cameraId));
+              return (
+                <button
+                  key={fence.id}
+                  type="button"
+                  aria-pressed={Boolean(isSelected)}
+                  onClick={() => {
+                    setSelectedLocation('all');
+                    setFeedScope('all');
+                    setSelectedLiveCameraIds(fence.cameras);
+                    setGridPage(0);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold transition ${isSelected ? 'border-blue-300 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white/70 text-slate-600 hover:border-slate-300 hover:bg-white'}`}
+                >
+                  <Layers className="h-3 w-3" /> {fence.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {camError && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-3 shadow-sm">
@@ -426,105 +485,130 @@ export default function LiveSurveillance() {
         </div>
       )}
 
-      <div className={`grid gap-4 ${gridSize === '2x2' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'} [&_.camera-card]:h-56`}>
-        {visibleHwCameras.map((device, index) => {
-          const hwStream = hardwareStreamsRef.current[device.deviceId];
-          const hwId = `HW-${index + 1}`;
-          const existingCam = cameras.find(c => c.id === hwId);
-          const mockHwCam = existingCam || {
-            id: hwId,
-            name: device.label || `USB Camera ${index + 1}`,
-            location: 'Local System',
-            bop: 'Command Center',
-            status: 'ONLINE' as const,
-            fps: 30,
-            camera_mode: 'ALL' as const,
-            recording: false,
-          };
-
-          return (
-            <div key={device.deviceId} className="space-y-2 relative hover:z-50 focus-within:z-50">
-              <div className="camera-card relative">
-                <CameraFeed
-                  camera={mockHwCam as unknown as Camera}
-                  detections={detections}
-                  liveStream={hwStream || null}
-                />
-                <div className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-950/80 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-emerald-300 backdrop-blur-md">
-                  <Shield className="h-3 w-3" />
-                  AES-256
-                </div>
-              </div>
-
-              <div className="camera-meta flex items-center justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-bold text-slate-800">
-                    {mockHwCam.id} — {mockHwCam.name}
-                    <span className="ml-1 text-blue-500">(Hardware)</span>
-                  </p>
-                  <p className="truncate text-[10px] text-slate-600">{mockHwCam.bop} • {mockHwCam.location}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <ModeSelector
-                    value={mockHwCam.camera_mode}
-                    onChange={(val) => setCameraMode(mockHwCam.id, val)}
-                  />
-                  <button
-                    onClick={() => setExpandedCameraId(isExpanded ? null : mockHwCam.id)}
-                    className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded"
-                    title={isExpanded ? "Exit Full Screen" : "Full Screen"}
-                  >
-                    {isExpanded ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white/75 shadow-sm" aria-label="Camera video wall">
+        <div className="flex flex-col gap-3 border-b border-slate-200/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-extrabold text-slate-900 sm:text-base">Camera video wall</h2>
+              <span className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">{gridSize}</span>
             </div>
-          );
-        })}
-
-        {visibleCameras.map(cam => (
-          <div key={cam.id} className="space-y-2 relative hover:z-50 focus-within:z-50">
-            <div className="camera-card relative">
-              <CameraFeed
-                camera={cam}
-                detections={detections}
-                liveStream={liveStream}
-              />
-            </div>
-
-            <div className="camera-meta flex items-center justify-between">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-bold text-slate-800">
-                  {cam.id} — {cam.name}
-                  {liveStream && <span className="ml-1 text-emerald-500">(Phone)</span>}
-                </p>
-                <p className="truncate text-[10px] text-slate-600">{cam.bop} • {cam.location}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <ModeSelector
-                  value={cam.camera_mode || 'ALL'}
-                  onChange={(val) => setCameraMode(cam.id, val)}
-                  disabled={cam.status === 'OFFLINE'}
-                />
-                <button
-                  onClick={() => setExpandedCameraId(isExpanded ? null : cam.id)}
-                  className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded"
-                  title={isExpanded ? "Exit Full Screen" : "Full Screen"}
-                >
-                  {isExpanded ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
+            <p className="mt-0.5 text-[10px] font-medium text-slate-500">
+              {feedItems.length === 0 ? 'No feeds match the current filters' : `Showing ${gridPage * pageSize + 1}–${Math.min((gridPage + 1) * pageSize, feedItems.length)} of ${feedItems.length} feeds`}
+            </p>
           </div>
-        ))}
-      </div>
+          <div className="flex items-center gap-1.5 self-end sm:self-auto">
+            <button
+              type="button"
+              aria-label="Previous camera page"
+              disabled={gridPage === 0}
+              onClick={() => setGridPage(page => Math.max(0, page - 1))}
+              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-[68px] text-center text-[10px] font-bold tabular-nums text-slate-500">{gridPage + 1} / {pageCount}</span>
+            <button
+              type="button"
+              aria-label="Next camera page"
+              disabled={gridPage >= pageCount - 1}
+              onClick={() => setGridPage(page => Math.min(pageCount - 1, page + 1))}
+              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
 
-      {cameras.some(c => c.status === 'OFFLINE') && (
+        {pageFeedItems.length > 0 ? (
+          <div className={`grid gap-3 bg-slate-100/70 p-3 sm:gap-4 sm:p-4 ${gridSize === '2x2' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3'}`}>
+            {pageFeedItems.map(item => {
+              const offline = isOfflineStatus(item.camera.status);
+              const cameraDetections = detections.filter(detection => detection.cameraId === item.camera.id);
+              const fullscreenKey = item.hardware ? item.key : item.camera.id;
+              const statusLabel = offline
+                ? 'OFFLINE'
+                : item.hardware
+                  ? item.stream ? 'LIVE' : 'NO SIGNAL'
+                  : item.stream || item.camera.rtsp_url || item.camera.status === 'LIVE'
+                    ? 'LIVE'
+                    : item.camera.status === 'DEGRADED'
+                      ? 'DEGRADED'
+                      : 'ONLINE';
+
+              return (
+                <article key={item.key} className="group min-w-0 space-y-2.5 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_4px_16px_rgba(15,23,42,0.07)] transition hover:border-slate-300 hover:shadow-md">
+                  <div className="camera-card relative aspect-video overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+                    <CameraFeed
+                      camera={item.camera}
+                      detections={detections}
+                      liveStream={item.stream}
+                      compact
+                      fullHeight
+                    />
+                  </div>
+
+                  <div className="flex min-w-0 items-center justify-between gap-2 px-1 pb-1">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${offline ? 'bg-red-500' : statusLabel === 'LIVE' ? 'animate-pulse bg-emerald-500' : statusLabel === 'NO SIGNAL' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                        <p className="truncate text-xs font-extrabold text-slate-800">{item.camera.id} · {item.camera.name}</p>
+                        <span className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider sm:inline ${offline ? 'bg-red-50 text-red-700' : statusLabel === 'LIVE' ? 'bg-emerald-50 text-emerald-700' : statusLabel === 'NO SIGNAL' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel}</span>
+                      </div>
+                      <p className="mt-1 flex min-w-0 items-center gap-2 truncate pl-4 text-[10px] text-slate-500">
+                        <span className="truncate">{item.camera.bop} <span className="px-1 text-slate-300">/</span> {item.camera.location}</span>
+                        <span className="shrink-0 text-slate-300">·</span>
+                        <span className="shrink-0 font-semibold text-slate-500">{item.sourceLabel}</span>
+                        {cameraDetections.length > 0 && <span className="shrink-0 font-bold text-blue-600">{cameraDetections.length} detections</span>}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <ModeSelector
+                        value={item.camera.camera_mode || 'ALL'}
+                        onChange={value => setCameraMode(item.camera.id, value)}
+                        disabled={offline}
+                      />
+                      <button
+                        type="button"
+                        aria-label={`${isExpanded && expandedCameraId === fullscreenKey ? 'Close' : 'Open'} fullscreen for ${item.camera.name}`}
+                        onClick={() => setExpandedCameraId(isExpanded && expandedCameraId === fullscreenKey ? null : fullscreenKey)}
+                        className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                        title={isExpanded && expandedCameraId === fullscreenKey ? 'Exit fullscreen' : 'Open fullscreen'}
+                      >
+                        {isExpanded && expandedCameraId === fullscreenKey ? <Minimize className="h-3.5 w-3.5" /> : <Maximize className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex min-h-[280px] flex-col items-center justify-center bg-slate-50 px-5 py-10 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm"><CameraIcon className="h-6 w-6" /></div>
+            <h3 className="mt-3 text-sm font-bold text-slate-700">No feeds to display</h3>
+            <p className="mt-1 max-w-sm text-xs text-slate-500">Change the status or location filters to see other cameras.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setFeedScope('all');
+                setSelectedLocation('all');
+                setSelectedLiveCameraIds(null);
+                setGridPage(0);
+              }}
+              className="mt-4 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-slate-700"
+            >
+              Clear filters
+            </button>
+          </div>
+        )}
+      </section>
+
+      {offlineCameraCount > 0 && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-3 shadow-sm">
           <div className="flex items-center gap-2">
             <Cctv className="h-4 w-4 text-red-500" />
             <p className="text-sm text-red-700">
-              {cameras.filter(c => c.status === 'OFFLINE').length} camera(s) offline: {cameras.filter(c => c.status === 'OFFLINE').map(c => c.id).join(', ')}
+              {offlineCameraCount} camera(s) offline: {cameras.filter(camera => isOfflineStatus(camera.status)).map(camera => camera.id).join(', ')}
             </p>
           </div>
         </div>
@@ -537,7 +621,7 @@ export default function LiveSurveillance() {
             {/* Modal Header content, e.g. camera name */}
             {(() => {
               const hwMatch = visibleHwCameras.find(d => `HW:${d.deviceId}` === expandedCameraId);
-              const camMatch = visibleCameras.find(c => c.id === expandedCameraId);
+              const camMatch = filteredCameras.find(camera => camera.id === expandedCameraId);
 
               if (hwMatch) {
                 return (
@@ -549,10 +633,11 @@ export default function LiveSurveillance() {
                 );
               }
               if (camMatch) {
+                const hasVideo = Boolean(liveStream || camMatch.rtsp_url || camMatch.status === 'LIVE');
                 return (
                   <div className="flex items-center gap-3">
-                    <span className="flex h-2.5 w-2.5 animate-pulse rounded-full bg-red-500"></span>
-                    <span className="text-lg font-black tracking-widest text-red-500">LIVE FEED</span>
+                    <span className={`flex h-2.5 w-2.5 rounded-full ${hasVideo ? 'animate-pulse bg-emerald-500' : 'bg-blue-400'}`}></span>
+                    <span className={`text-lg font-black tracking-widest ${hasVideo ? 'text-emerald-400' : 'text-blue-300'}`}>{hasVideo ? 'LIVE FEED' : 'CAMERA PREVIEW'}</span>
                     <span className="text-sm font-medium text-slate-400">/ {camMatch.id} - {camMatch.name}</span>
                   </div>
                 );
@@ -583,7 +668,7 @@ export default function LiveSurveillance() {
                   );
                 }
 
-                const camMatch = visibleCameras.find(c => c.id === expandedCameraId);
+                const camMatch = filteredCameras.find(camera => camera.id === expandedCameraId);
                 if (camMatch) {
                   return (
                     <div className="absolute inset-0 border border-slate-700/50 rounded-xl overflow-hidden shadow-2xl bg-black">

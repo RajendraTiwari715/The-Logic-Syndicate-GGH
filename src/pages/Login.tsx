@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../store';
 import { Shield, Lock, User as UserIcon, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import SiteFooter from '../components/SiteFooter';
 
 export default function Login() {
   const { login } = useApp();
@@ -181,14 +182,7 @@ export default function Login() {
         </div>
       </main>
       
-      {/* Footer Details */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white/70 backdrop-blur-sm border-t border-slate-200/50 py-2.5 text-center flex justify-center items-center gap-8 text-[10px] sm:text-xs font-semibold text-slate-600 uppercase tracking-widest">
-        <span>Feedback</span>
-        <span>Website Policies</span>
-        <span>Help</span>
-        <span>Contact Us</span>
-        <span>Web Information Manager</span>
-      </div>
+      <SiteFooter />
     </div>
   );
 }

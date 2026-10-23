@@ -15,6 +15,7 @@ import {
   Database,
 } from 'lucide-react';
 import { useApp } from '../store';
+import SiteFooter from './SiteFooter';
 
 export type PageId =
   | 'overview'
@@ -185,7 +186,7 @@ export default function Layout({ current, onNavigate, children }: Props) {
         )}
 
         <div className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-slate-50">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/75 backdrop-blur-md shadow-sm">
+          <header className={`sticky top-0 z-20 border-b border-slate-200 bg-white/75 backdrop-blur-md shadow-sm ${current === 'overview' ? 'lg:hidden' : ''}`}>
             <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
               <div className="flex items-center gap-3">
                 <button
@@ -200,7 +201,9 @@ export default function Layout({ current, onNavigate, children }: Props) {
             </div>
           </header>
 
-          <main className="min-w-0 flex-1 px-4 py-5 sm:px-6">{children}</main>
+          <main className={current === 'overview' ? 'min-w-0 flex-1 bg-[#eef5fd]' : 'min-w-0 flex-1 px-4 py-5 sm:px-6'}>{children}</main>
+
+          <SiteFooter />
 
           {toast && (
             <div className="pointer-events-none fixed bottom-4 right-4 z-50 max-w-sm">
