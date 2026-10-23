@@ -1,6 +1,5 @@
 # Intelligent Border Video Analytics Platform (IBVAP)
 
-This repository contains the full-stack implementation of the IBVAP platform for AI-Based Border Surveillance (Problem Statement 26187, Sashastra Seema Bal).
 
 The platform uses existing IP CCTV infrastructure without dedicated AI camera hardware to detect threats dynamically via centralized ML engines, with edge tolerance and permissioned blockchain evidence ledgers.
 
