@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../store';
 import CameraFeed from '../components/CameraFeed';
-import { ScanFace, UserCheck, UserX, AlertTriangle, Clock, MapPin, ArrowRightLeft, Camera as CameraIcon, Maximize2, Minimize2, ShieldAlert, Route } from 'lucide-react';
-import type { FaceRecord, Detection } from '../types';
-import { WS_BASE_URL, api } from '../lib/api';
+import { ScanFace, UserCheck, UserX, AlertTriangle, Clock, ArrowRightLeft, Minimize2 } from 'lucide-react';
+import type { FaceRecord } from '../types';
+import { api } from '../lib/api';
 
 export default function FaceDetection() {
-  const { cameras, addFace, detections } = useApp();
+  const { cameras } = useApp();
   const [paginatedFaces, setPaginatedFaces] = useState<FaceRecord[]>([]);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -17,7 +17,7 @@ export default function FaceDetection() {
   const fetchHistory = async (pageNum: number) => {
     try {
       setLoading(true);
-      const data = await api.analytics.faces(pageNum * 20, 20);
+      const data = await api.analytics.recentFaces(pageNum * 20, 20);
       setPaginatedFaces(data);
     } catch (e) {
       console.error(e);

@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Tuple, Optional, Any
@@ -44,7 +45,9 @@ class EvidenceStorageService:
         """
         self._ensure_bucket()
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
-        filename = f"{camera_id}_{label}_{timestamp}.jpg"
+        safe_camera_id = re.sub(r"[^A-Za-z0-9_.-]", "_", camera_id)[:80] or "camera"
+        safe_label = re.sub(r"[^A-Za-z0-9_.-]", "_", label)[:80] or "snapshot"
+        filename = f"{safe_camera_id}_{safe_label}_{timestamp}.jpg"
         
         success, encoded_image = cv2.imencode('.jpg', frame)
         if not success:
@@ -64,7 +67,7 @@ class EvidenceStorageService:
                     length=file_size,
                     content_type="image/jpeg"
                 )
-                url = f"/api/v1/stream/evidence/{filename}" # typically served via proxy or presigned url
+                url = f"{settings.API_URL}{settings.API_V1_STR}/stream/evidence/{filename}"
                 return url, sha256_hash, file_size
             except S3Error as e:
                 logger.error(f"MinIO PutObject failed: {e}")
@@ -76,7 +79,7 @@ class EvidenceStorageService:
         with open(output_path, "wb") as f:
             f.write(byte_buffer)
         
-        url = f"/api/v1/stream/evidence/local/{filename}"
+        url = f"{settings.API_URL}{settings.API_V1_STR}/stream/evidence/{filename}"
         return url, sha256_hash, file_size
 
     def download_evidence(self, filename: str) -> Optional[bytes]:
@@ -85,7 +88,11 @@ class EvidenceStorageService:
         if client:
             try:
                 response = client.get_object(self.bucket_name, filename)
-                return response.read()
+                try:
+                    return response.read()
+                finally:
+                    response.close()
+                    response.release_conn()
             except Exception as e:
                 logger.error(f"Download failed from MinIO: {e}")
                 

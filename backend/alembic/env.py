@@ -27,7 +27,7 @@ import app.models.user
 target_metadata = Base.metadata
 
 def get_url():
-    return os.getenv("DATABASE_URL", "postgresql://ibvap:ibvap123@localhost:5432/ibvap_db")
+    return os.getenv("DATABASE_URL", "postgresql+psycopg2://ibvap:ibvap123@localhost:5432/ibvap_db")
 
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")

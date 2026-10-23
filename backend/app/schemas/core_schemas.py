@@ -119,6 +119,7 @@ class FaceRecordCreate(FaceRecordBase):
 
 class FaceRecord(FaceRecordBase):
     id: str
+    type: Optional[str] = "face"
     model_config = ConfigDict(from_attributes=True)
 
 class ZoneBase(BaseModel):

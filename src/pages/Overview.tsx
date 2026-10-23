@@ -16,7 +16,7 @@ import type { Alert, Camera, RiskLevel } from '../types';
 import { useApp } from '../store';
 import type { PageId } from '../components/Layout';
 import BorderMapPanel from '../components/BorderMapPanel';
-import DashboardCameraCard, { DASHBOARD_PREVIEW_FRAMES } from '../components/DashboardCameraCard';
+import DashboardCameraCard from '../components/DashboardCameraCard';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CHART_BUCKETS = 8;
@@ -54,11 +54,6 @@ function severityTone(severity: RiskLevel) {
   return 'bg-emerald-50 text-emerald-700 border-emerald-200';
 }
 
-function cameraThumbnail(cameraId: string, cameras: Camera[]) {
-  const cameraIndex = cameras.findIndex(camera => camera.id === cameraId);
-  return DASHBOARD_PREVIEW_FRAMES[(cameraIndex < 0 ? 0 : cameraIndex) % DASHBOARD_PREVIEW_FRAMES.length];
-}
-
 function PanelHeading({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3 px-3.5 py-3">
@@ -75,7 +70,7 @@ function IncidentRow({
   onClick,
 }: {
   alert: Alert;
-  image: string;
+  image?: string;
   selected: boolean;
   onClick: () => void;
 }) {
@@ -86,7 +81,13 @@ function IncidentRow({
       aria-pressed={selected}
       className={`flex w-full items-center gap-2.5 rounded-xl border p-2 text-left transition ${selected ? 'border-orange-200 bg-orange-50/70' : 'border-transparent hover:border-slate-200 hover:bg-slate-50'}`}
     >
-      <img src={image} alt="" className="h-11 w-12 shrink-0 rounded-lg object-cover" />
+      {image ? (
+        <img src={image} alt="" className="h-11 w-12 shrink-0 rounded-lg object-cover" />
+      ) : (
+        <span aria-hidden="true" className="flex h-11 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+          <CameraIcon className="h-5 w-5" />
+        </span>
+      )}
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className={`h-2 w-2 shrink-0 rounded-full ${alert.severity === 'HIGH' || alert.severity === 'CRITICAL' ? 'bg-red-500' : alert.severity === 'MEDIUM' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
@@ -232,8 +233,7 @@ export default function Overview({ onNavigate }: { onNavigate: (page: PageId) =>
   };
 
   const selectedCamera = selectedAlert ? cameras.find(camera => camera.id === selectedAlert.cameraId) : undefined;
-  const previewImage = selectedAlert?.image || cameraThumbnail(selectedAlert?.cameraId || '', cameras);
-  const previewIsSample = !selectedAlert?.image;
+  const previewImage = selectedAlert?.image;
 
   return (
     <div className="dashboard-shell animate-fade-in space-y-2 p-2 pb-3">
@@ -277,7 +277,6 @@ export default function Overview({ onNavigate }: { onNavigate: (page: PageId) =>
                 <DashboardCameraCard
                   key={camera.id}
                   camera={camera}
-                  index={index}
                   detections={detections}
                   onOpen={() => openCamera(camera.id)}
                   spanClass={spanClass}
@@ -308,7 +307,7 @@ export default function Overview({ onNavigate }: { onNavigate: (page: PageId) =>
               <IncidentRow
                 key={alert.id}
                 alert={alert}
-                image={alert.image || cameraThumbnail(alert.cameraId, cameras)}
+                image={alert.image}
                 selected={alert.id === selectedAlert?.id}
                 onClick={() => setSelectedAlertId(alert.id)}
               />
@@ -327,9 +326,16 @@ export default function Overview({ onNavigate }: { onNavigate: (page: PageId) =>
           {selectedAlert ? (
             <div className="flex-1 border-t border-slate-100 p-3">
               <div className="relative aspect-[1.8/1] overflow-hidden rounded-xl bg-slate-900">
-                <img src={previewImage} alt={previewIsSample ? 'Sample frame for selected incident' : 'Incident evidence'} className="absolute inset-0 h-full w-full object-cover" />
+                {previewImage ? (
+                  <img src={previewImage} alt="Incident evidence" className="absolute inset-0 h-full w-full object-cover" />
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[radial-gradient(ellipse_at_center,_#1e293b_0%,_#0f172a_70%)] text-slate-400">
+                    <CameraIcon className="h-8 w-8" />
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em]">No evidence image available</span>
+                  </div>
+                )}
                 <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 bg-gradient-to-b from-slate-950/70 to-transparent p-2.5">
-                  <span className="rounded-md border border-white/20 bg-slate-950/50 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-white">{previewIsSample ? 'Sample frame' : 'Evidence frame'}</span>
+                  <span className="rounded-md border border-white/20 bg-slate-950/50 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-white">{previewImage ? 'Evidence frame' : 'No image attached'}</span>
                   <span className={`rounded-md border px-2 py-1 text-[9px] font-bold uppercase tracking-wider ${severityTone(selectedAlert.severity)}`}>{selectedAlert.severity}</span>
                 </div>
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/75 to-transparent px-3 pb-2.5 pt-8">

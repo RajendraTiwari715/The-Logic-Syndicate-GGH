@@ -6,8 +6,17 @@ The platform uses existing IP CCTV infrastructure without dedicated AI camera ha
 
 ## Implementation Status
 The backend logic structure is **Complete (CODE-VERIFIED)**.
-Due to lack of local Docker availability (PostgreSQL, Minio, Redis cannot run on standard Windows shell without hypervisors available in this instance), the core application is constrained strictly to **Offline/Dry-Run states**. 
-We built an extensive offline-fallback edge queue (`offline_sync.py`) to buffer events locally over HTTP boundaries and a pure local hash-chain (`ledger.json`) as a workaround to missing infrastructure.
+
+## Run the application with Docker Desktop
+
+With Docker Desktop running, start the API and its Postgres, Redis, and MinIO services from the project root:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+The API is available at `http://localhost:8000` (health: `http://localhost:8000/health`, docs: `http://localhost:8000/docs`). Start the Vite frontend separately with `npm run dev`; it defaults to that API address. To stop the containers, run `docker compose down`. Persistent service and backend data remains in Docker volumes. Environments without these services can still use the offline queue and local evidence ledger.
 
 ## Stack
 - **Frontend**: React + Vite + TailwindCSS + Zustand

@@ -51,7 +51,43 @@ services:
       timeout: 5s
       retries: 5
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ibvap_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ibvap}:${POSTGRES_PASSWORD:-ibvap123}@db:5432/${POSTGRES_DB:-ibvap_db}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-admin12345}
+      MINIO_SECURE: "False"
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-before-production}
+      API_URL: ${API_URL:-http://localhost:8000}
+      API_V1_STR: ${API_V1_STR:-/api/v1}
+      PROJECT_NAME: ${PROJECT_NAME:-AssistanCCTV AI Backend}
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/liveness"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  backend_data:

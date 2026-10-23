@@ -108,7 +108,7 @@ export const api = {
     evidence: () => request<any[]>('/api/v1/analytics/evidence'),
     verifyEvidence: (id: string) => request<any>(`/api/v1/analytics/evidence/${id}/verify`),
     faces: (skip = 0, limit = 50) => request<any[]>(`/api/v1/analytics/faces?skip=${skip}&limit=${limit}`),
-    recentFaces: () => request<any[]>('/api/v1/analytics/faces/recent'),
+    recentFaces: (skip = 0, limit = 50) => request<any[]>(`/api/v1/analytics/faces/recent?skip=${skip}&limit=${limit}`),
     tracks: () => request<any[]>('/api/v1/analytics/tracks'),
     watchlist: () => request<any[]>('/api/v1/analytics/watchlist'),
     addWatchlist: (data: any) => request<any>('/api/v1/analytics/watchlist', { method: 'POST', body: JSON.stringify(data) }),

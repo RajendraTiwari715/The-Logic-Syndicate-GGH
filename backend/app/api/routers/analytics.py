@@ -39,6 +39,22 @@ from app.vision.anpr import anpr_service
 
 router = APIRouter()
 
+
+def _face_payload(face: DB_Face) -> dict:
+    payload = {
+        "id": face.id,
+        "cameraId": face.cameraId,
+        "identity": face.identity,
+        "confidence": face.confidence,
+        "timestamp": face.timestamp,
+        "database": face.database,
+        "status": face.status,
+        "image": face.image,
+        "direction": face.direction,
+        "type": "object" if face.database == "Object Detection" else "face",
+    }
+    return payload
+
 # Vehicles (ANPR)
 @router.get("/vehicles", response_model=List[VehicleRecord])
 def get_vehicles(db: Session = Depends(get_db)):
@@ -95,11 +111,13 @@ def create_vehicle(vehicle: VehicleRecordCreate, db: Session = Depends(get_db)):
 # Faces (Facial Recognition)
 @router.get("/faces", response_model=List[FaceRecord])
 def get_faces(skip: int = 0, limit: int = 50, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(DB_Face).order_by(DB_Face.timestamp.desc()).offset(skip).limit(limit).all()
+    faces = db.query(DB_Face).order_by(DB_Face.timestamp.desc()).offset(skip).limit(limit).all()
+    return [_face_payload(face) for face in faces]
 
 @router.get("/faces/recent", response_model=List[FaceRecord])
-def get_recent_faces(db: Session = Depends(get_db)):
-    return db.query(DB_Face).order_by(DB_Face.timestamp.desc()).limit(50).all()
+def get_recent_faces(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    faces = db.query(DB_Face).order_by(DB_Face.timestamp.desc()).offset(skip).limit(limit).all()
+    return [_face_payload(face) for face in faces]
 
 @router.post("/faces", response_model=FaceRecord)
 def create_face(face: FaceRecordCreate, db: Session = Depends(get_db)):

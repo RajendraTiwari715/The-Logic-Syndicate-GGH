@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+    # Public URL used by image links returned to the browser.
+    API_URL: str = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+
     # MinIO
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     MINIO_ROOT_USER: str = os.getenv("MINIO_ROOT_USER", "admin")

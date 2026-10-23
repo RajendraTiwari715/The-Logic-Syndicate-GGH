@@ -9,7 +9,7 @@ from datetime import datetime
 
 from app.core.camera_worker import CameraWorker
 from app.db.session import SessionLocal
-from app.services.anpr_pipeline import process_anpr_frame, encode_image_base64
+from app.services.anpr_pipeline import process_anpr_frame
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,7 @@ class WorkerPool:
         self._face_cascade = None
         self._known_faces: list = []  # [{id, hist, last_seen, identity}]
         self._last_face_time: Dict[str, float] = {}
+        self._last_object_snapshot: Dict[tuple[str, str], float] = {}
         self._last_fence_time: float = 0.0
 
     def _get_face_cascade(self):
@@ -63,6 +64,49 @@ class WorkerPool:
                 manager.broadcast(payload),
                 self._loop
             )
+
+    def _save_object_snapshot(self, db, camera_id: str, frame: np.ndarray, detection: dict, timestamp: str) -> None:
+        """Persist at most one representative non-face image per camera/class each minute."""
+        if detection.get("class") == "person":
+            return
+
+        snapshot_key = (camera_id, detection.get("class", "object"))
+        now = time.time()
+        if now - self._last_object_snapshot.get(snapshot_key, 0.0) < 60:
+            return
+
+        x1, y1, x2, y2 = (int(round(value)) for value in detection["bbox"])
+        frame_h, frame_w = frame.shape[:2]
+        x1, x2 = max(0, x1), min(frame_w, x2)
+        y1, y2 = max(0, y1), min(frame_h, y2)
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return
+
+        try:
+            from app.models.core_models import FaceRecord
+            from app.services.snapshot_store import evidence_storage
+
+            stored_image = evidence_storage.upload_evidence(crop, camera_id, f"OBJECT_{detection.get('label', 'DETECTION')}")
+            if not stored_image:
+                return
+
+            db.add(FaceRecord(
+                id=f"OBJECT-LOG-{uuid.uuid4().hex[:8]}",
+                cameraId=camera_id,
+                identity=detection.get("label", detection.get("class", "Object")).title(),
+                confidence=int(round(detection.get("confidence", 0) * 100)),
+                timestamp=timestamp,
+                database="Object Detection",
+                status="UNKNOWN",
+                image=stored_image[0],
+                direction="Unknown",
+            ))
+            db.commit()
+            self._last_object_snapshot[snapshot_key] = now
+        except Exception as exc:
+            db.rollback()
+            logger.warning("[%s] Could not persist object snapshot: %s", camera_id, exc)
 
     def _inference_bridge(self, frame: np.ndarray, camera_id: str, context: dict = None):
         """
@@ -154,6 +198,7 @@ class WorkerPool:
                             h, w = frame.shape[:2]
                             now_iso = datetime.utcnow().isoformat() + "Z"
                             for idx, det in enumerate(detections):
+                                self._save_object_snapshot(db, camera_id, frame, det, now_iso)
                                 x1, y1, x2, y2 = det["bbox"]
                                 stable_id = f"{camera_id}-{det['class']}-{idx}"
                                 self._broadcast_sync({
@@ -339,6 +384,14 @@ class WorkerPool:
                                             f"status={face_status} identity={face_identity}"
                                         )
 
+                                    # Persist the crop in the Docker-backed evidence store and
+                                    # keep only its URL in PostgreSQL.
+                                    from app.services.snapshot_store import evidence_storage
+                                    face_snapshot = evidence_storage.upload_evidence(
+                                        face_crop, camera_id, f"FACE_{face_identity}"
+                                    )
+                                    face_image_url = face_snapshot[0] if face_snapshot else None
+
                                     # Attempt deep identity resolution via IdentityManager
                                     try:
                                         from app.services.identity_manager import IdentityManager
@@ -347,7 +400,8 @@ class WorkerPool:
                                         person, is_new_entry_event = im.resolve_person(
                                             tracking_id=tracking_id,
                                             face_embedding=hist.flatten().tolist(),
-                                            name=face_identity if face_identity not in ("UNKNOWN", f"Unknown ID-{face_id_str[-4:]}") else None
+                                            name=face_identity if face_identity not in ("UNKNOWN", f"Unknown ID-{face_id_str[-4:]}") else None,
+                                            live_image=face_image_url,
                                         )
                                         face_identity = person.name
                                         face_status = person.authorization_status
@@ -363,7 +417,6 @@ class WorkerPool:
                                     if not is_new_entry_event:
                                         continue
 
-                                    b64_img = encode_image_base64(face_crop)
                                     now_iso = datetime.utcnow().isoformat() + "Z"
 
                                     frame_h, frame_w = frame.shape[:2]
@@ -379,7 +432,7 @@ class WorkerPool:
                                         timestamp=now_iso,
                                         database="Local DB",
                                         status=face_status,
-                                        image=f"data:image/jpeg;base64,{b64_img}" if b64_img else None,
+                                        image=face_image_url,
                                         direction="Inbound" if "01" in camera_id else "Unknown"
                                     )
                                     db.add(face_record)
