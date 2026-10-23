@@ -3,11 +3,14 @@
 
 [![React](https://img.shields.io/badge/React-18-blue?logo=react)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python)](https://python.org/)
+[![YOLOv8](https://img.shields.io/badge/YOLO-v8n-FF5722?logo=ultralytics)](https://github.com/ultralytics/ultralytics)
 [![Vite](https://img.shields.io/badge/Vite-5.4-purple?logo=vite)](https://vitejs.dev/)
 [![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC?logo=tailwind-css)](https://tailwindcss.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An advanced, military-grade border surveillance and video intelligence console engineered by **The Logic Syndicate**. The platform dynamically monitors border zones using existing IP camera infrastructures, applying centralized ML vision models, perimeter intrusion detection, automated number plate recognition (ANPR), facial identification, and permissioned cryptographic blockchain evidence ledgers for tamper-evident audit trails.
+An advanced, military-grade border surveillance and video intelligence platform engineered by **The Logic Syndicate**. The platform dynamically monitors border zones using existing IP camera infrastructures, applying centralized ML vision models, perimeter intrusion detection, automated number plate recognition (ANPR), facial identification, and permissioned cryptographic blockchain evidence ledgers for tamper-evident audit trails.
 
 ---
 
@@ -21,18 +24,28 @@ An advanced, military-grade border surveillance and video intelligence console e
 - **📊 Behavioral Anomaly Detection**: AI detection of crawling, weapon wielding, crowd formation, and suspicious border crossing activities.
 - **⛓️ Immutable Blockchain Evidence Ledger**: SHA-256 cryptographic hash-chained audit trail guaranteeing evidence integrity for all security incidents.
 - **📡 Camera Network Health Diagnostics**: Real-time latency tracking, RTSP stream health, signal status, and offline fallback telemetry.
+- **⚡ Offline Edge Queue Synchronization**: Resilient local event buffering ensuring zero telemetry data loss during connectivity dropouts.
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Full-Stack Technology Stack
 
+### Frontend Intelligence Console
 - **Framework**: [React 18](https://react.dev/) + [Vite](https://vitejs.dev/)
 - **Language**: [TypeScript](https://www.typescriptlang.org/)
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/) + Custom Glassmorphic Dark Tactical UI
 - **Mapping & Geospatial**: [Leaflet](https://leafletjs.com/) / [React-Leaflet](https://react-leaflet.js.org/)
 - **Charts & Telemetry**: [Recharts](https://recharts.org/)
 - **Iconography**: [Lucide React](https://lucide.dev/)
-- **Authentication & Backend Integration**: Firebase + REST API Adapters
+- **Authentication**: Firebase Auth + JWT Bearer Tokens
+
+### Backend Services & Vision Engine
+- **Web API Framework**: [FastAPI](https://fastapi.tiangolo.com/) (Asynchronous ASGI)
+- **Computer Vision & ML**: PyTorch, OpenCV, YOLOv8 (`ultralytics`), EasyOCR
+- **Database & ORM**: SQLAlchemy 2.0, SQLite / PostgreSQL, Alembic migrations
+- **Caching & Message Broker**: Redis Pub/Sub, Multi-process Worker Pool
+- **Audit & Evidence Integrity**: SHA-256 Cryptographic Hash-Chain Ledger
+- **Storage**: Local Evidence Cache + S3 / MinIO Object Storage
 
 ---
 
@@ -40,8 +53,25 @@ An advanced, military-grade border surveillance and video intelligence console e
 
 ```text
 The-Logic-Syndicate-GGH/
+├── backend/                    # Python FastAPI & AI vision services
+│   ├── alembic/                # Relational database schema migrations
+│   ├── app/
+│   │   ├── api/                # FastAPI v1 endpoints & router mounts
+│   │   │   └── routers/        # Auth, Cameras, Alerts, Analytics, Streams, Zones
+│   │   ├── core/               # App configuration, security, Redis, worker pool
+│   │   ├── database/           # Engine setup and ORM base classes
+│   │   ├── models/             # SQLAlchemy entity definitions & schemas
+│   │   ├── schemas/            # Pydantic request/response validation schemas
+│   │   ├── services/           # ANPR, Audit, Incident engine, Ledger, CCTV connectors
+│   │   ├── vision/             # YOLO detector, ByteTrack, ANPR OCR, Zone rules
+│   │   └── websocket/          # Real-time WebSocket connection manager
+│   ├── data/                   # ANPR captures, edge queue, evidence cache, ledger
+│   ├── tests/                  # Automated integration & unit test suites
+│   ├── yolov8n.pt              # Pre-trained YOLO weights
+│   ├── main.py                 # Backend application entrypoint
+│   └── requirements.txt        # Python package dependencies
 ├── public/                     # Static border footage, patrol snapshots & assets
-├── src/
+├── src/                        # React TypeScript frontend console
 │   ├── components/             # Reusable tactical UI components
 │   │   ├── CameraFeed.tsx      # Video player & stream viewer
 │   │   ├── GlobalAlarm.tsx     # Perimeter intrusion sirens & alerts
@@ -91,11 +121,7 @@ The-Logic-Syndicate-GGH/
 
 ## ⚡ Quick Start
 
-### Prerequisites
-- Node.js (v18 or higher)
-- npm or yarn
-
-### Installation
+### 1. Frontend Setup
 ```bash
 # Clone the repository
 git clone https://github.com/RajendraTiwari715/The-Logic-Syndicate-GGH.git
@@ -103,17 +129,37 @@ git clone https://github.com/RajendraTiwari715/The-Logic-Syndicate-GGH.git
 # Navigate into project directory
 cd The-Logic-Syndicate-GGH
 
-# Install dependencies
+# Install frontend dependencies
 npm install
-```
 
-### Running Locally
-```bash
 # Start Vite development server
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser to access the tactical surveillance operator console.
+The operator console will be live at `http://localhost:5173`.
+
+### 2. Backend Setup
+```bash
+# Navigate to backend directory
+cd backend
+
+# Create and activate Python virtual environment
+python -m venv venv
+venv\Scripts\activate   # Windows
+# source venv/bin/activate # Linux / macOS
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Run database setup & camera seeders
+python init_db.py
+python seed_cameras.py
+
+# Launch FastAPI ASGI server
+python main.py
+```
+
+FastAPI Swagger Documentation will be accessible at `http://localhost:8000/docs`.
 
 ---
 
