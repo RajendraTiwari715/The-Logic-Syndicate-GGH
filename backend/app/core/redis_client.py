@@ -17,6 +17,12 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
 
+    @property
+    def redis(self):
+        if not self.client:
+            self.connect()
+        return self.client
+
     def get_client(self):
         if not self.client:
             self.connect()
