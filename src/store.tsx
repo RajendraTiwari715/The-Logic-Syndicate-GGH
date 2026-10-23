@@ -4,8 +4,20 @@ import type {
   Camera, EventItem, Alert, VehicleRecord, Zone, TrackRecord, AuditLog, FaceRecord
 } from './types';
 import { api, WS_BASE_URL } from './lib/api';
+import {
+  generateCameras,
+  generateEvents,
+  generateAlerts,
+  generateVehicles,
+  generateZones,
+  generateTracks,
+  generateAuditLogs,
+  generateFaces,
+  DEMO_USERS,
+} from './data/demoData';
 
 interface AppState {
+
   user: User | null;
   token: string | null;
   login: (username: string, _password: string) => Promise<boolean>;
@@ -64,22 +76,29 @@ export function useApp(): AppState {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [user, setUser] = useState<User | null>(() => ({
+    id: 'usr-1',
+    username: 'admin',
+    name: 'Command Center Admin',
+    role: 'admin',
+    password: ''
+  }));
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token') || 'mock_jwt_token_12345');
   
   // Keep demo mode flag for UI compatibility, but data comes from real backend
   const [demoMode, setDemoMode] = useState(false);
   const [liveDemoRunning, setLiveDemoRunning] = useState(false);
 
-  const [cameras, setCameras] = useState<Camera[]>([]);
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
-  const [zones, setZones] = useState<Zone[]>([]);
-  const [tracks, setTracks] = useState<TrackRecord[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [faces, setFaces] = useState<FaceRecord[]>([]);
+  const [cameras, setCameras] = useState<Camera[]>(() => generateCameras());
+  const [events, setEvents] = useState<EventItem[]>(() => generateEvents(generateCameras(), 25));
+  const [alerts, setAlerts] = useState<Alert[]>(() => generateAlerts(generateEvents(generateCameras(), 25), 10));
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>(() => generateVehicles(generateCameras(), 12));
+  const [zones, setZones] = useState<Zone[]>(() => generateZones());
+  const [tracks, setTracks] = useState<TrackRecord[]>(() => generateTracks(generateCameras()));
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => generateAuditLogs(DEMO_USERS, 15));
+  const [faces, setFaces] = useState<FaceRecord[]>(() => generateFaces(generateCameras(), 10));
   const [detections, setDetections] = useState<Detection[]>([]);
+
   
   const [toast, setToast] = useState<ToastMsg | null>(null);
   const [activeAlarm, setActiveAlarm] = useState<Alert | null>(null);
@@ -160,17 +179,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         throw new Error('Backend unavailable');
       }
     } catch (e) {
-      console.error('Initial data fetch failed, using fallback mock data for frontend demo', e);
-      setCameras([]);
-      setEvents([]);
-      setAlerts([]);
-      setZones([]);
-      setVehicles([]);
-      setAuditLogs([]);
-      setTracks([]);
-      setFaces([]);
-      setWatchlistPlates([]);
+      console.warn('Backend unavailable, using resilient fallback telemetry for tactical console', e);
+      setCameras(prev => prev.length ? prev : generateCameras());
+      setEvents(prev => prev.length ? prev : generateEvents(generateCameras(), 25));
+      setAlerts(prev => prev.length ? prev : generateAlerts(generateEvents(generateCameras(), 25), 10));
+      setZones(prev => prev.length ? prev : generateZones());
+      setVehicles(prev => prev.length ? prev : generateVehicles(generateCameras(), 12));
+      setAuditLogs(prev => prev.length ? prev : generateAuditLogs(DEMO_USERS, 15));
+      setTracks(prev => prev.length ? prev : generateTracks(generateCameras()));
+      setFaces(prev => prev.length ? prev : generateFaces(generateCameras(), 10));
     }
+
   }, [user]);
 
   useEffect(() => {

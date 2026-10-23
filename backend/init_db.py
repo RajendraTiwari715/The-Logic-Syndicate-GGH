@@ -141,6 +141,7 @@ def init_db():
                 direction=direction,
             )
             db.add(veh)
+            db.flush()
             
             evidence = Evidence(
                 id=str(uuid.uuid4()),
